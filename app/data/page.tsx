@@ -3,6 +3,7 @@ import { store } from "@/lib/data";
 
 export const metadata: Metadata = { title: "Open data" };
 export const dynamic = "force-dynamic";
+export const maxDuration = 30;
 
 export default async function DataPage() {
   const stats = await store.siteStats();

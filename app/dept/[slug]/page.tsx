@@ -7,6 +7,7 @@ import ReportCard from "@/components/ReportCard";
 import StatTile from "@/components/StatTile";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 30;
 
 export async function generateMetadata({ params }: { params: { slug: string } }): Promise<Metadata> {
   const d = departmentBySlug(params.slug);

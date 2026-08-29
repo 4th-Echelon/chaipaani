@@ -5,6 +5,7 @@ import { formatINR } from "@/lib/format";
 
 export const metadata: Metadata = { title: "Cities" };
 export const dynamic = "force-dynamic";
+export const maxDuration = 30;
 
 export default async function CitiesPage() {
   const cities = await store.cityStats(50);

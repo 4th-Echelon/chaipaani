@@ -4,6 +4,7 @@ import { formatINR, pct } from "@/lib/format";
 
 export const metadata: Metadata = { title: "Compare departments" };
 export const dynamic = "force-dynamic";
+export const maxDuration = 30;
 
 export default async function ComparePage({ searchParams }: { searchParams: { a?: string; b?: string } }) {
   const a = searchParams.a ?? "police";

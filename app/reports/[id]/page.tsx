@@ -6,6 +6,7 @@ import { formatINR, longDate } from "@/lib/format";
 import VoteButtons from "@/components/VoteButtons";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 30;
 
 export async function generateMetadata({ params }: { params: { id: string } }): Promise<Metadata> {
   const r = await store.getReport(params.id);

@@ -79,12 +79,20 @@ export function rowToReport(r: Row, clusterSize?: number): Report {
 
 const TTL_MS = 60_000;
 const cache = new Map<string, { at: number; value: unknown }>();
+const QUERY_TIMEOUT_MS = Number(process.env.DB_QUERY_TIMEOUT_MS ?? 12_000);
 async function cached<T>(key: string, fn: () => Promise<T>): Promise<T> {
   const hit = cache.get(key);
   if (hit && Date.now() - hit.at < TTL_MS) return hit.value as T;
-  const value = await fn();
-  cache.set(key, { at: Date.now(), value });
-  return value;
+  const timer = new Promise<never>((_, reject) => setTimeout(() => reject(new Error(`Query "${key}" exceeded ${QUERY_TIMEOUT_MS} ms`)), QUERY_TIMEOUT_MS).unref?.());
+  try {
+    const value = await Promise.race([fn(), timer]);
+    cache.set(key, { at: Date.now(), value });
+    return value;
+  } catch (err) {
+    // Serve the last good value if we have one, however old.
+    if (hit) return hit.value as T;
+    throw err;
+  }
 }
 export function invalidateCache(): void {
   cache.clear();
@@ -174,27 +182,29 @@ export function createDbStore(): DataStore {
         const d = await db();
         await loadDepartments(d);
         const pub = eq(reports.status, "published");
-        const [{ total }] = await d.select({ total: count() }).from(reports).where(pub);
-        const [{ cities: c }] = await d
-          .select({ cities: sql<number>`count(distinct lower(${reports.cityText}) || '|' || ${reports.stateCode})` })
-          .from(reports)
-          .where(pub);
-        const [ref] = await d
-          .select({
-            refused: count(),
-            got: sql<number>`count(*) filter (where ${reports.outcome} = 'refused_got_service')`,
-          })
-          .from(reports)
-          .where(and(pub, eq(reports.reportType, "refused")));
-        const top = await d
-          .select({ id: reports.departmentId, c: count() })
-          .from(reports)
-          .where(pub)
-          .groupBy(reports.departmentId)
-          .orderBy(desc(count()))
-          .limit(5);
-        const latest = (await d.select().from(reports).where(and(pub, eq(reports.reportType, "paid"))).orderBy(desc(reports.createdAt)).limit(1))[0];
-        const featured = (await d.select().from(reports).where(and(pub, eq(reports.reportType, "paid"))).orderBy(desc(reports.amount)).limit(1))[0];
+        const [[hdr], top, [latest], [featured]] = await Promise.all([
+          d
+            .select({
+              total: count(),
+              cities: sql<number>`count(distinct lower(${reports.cityText}) || '|' || ${reports.stateCode})`,
+              refused: sql<number>`count(*) filter (where ${reports.reportType} = 'refused')`,
+              got: sql<number>`count(*) filter (where ${reports.outcome} = 'refused_got_service')`,
+            })
+            .from(reports)
+            .where(pub),
+          d
+            .select({ id: reports.departmentId, c: count() })
+            .from(reports)
+            .where(pub)
+            .groupBy(reports.departmentId)
+            .orderBy(desc(count()))
+            .limit(5),
+          d.select().from(reports).where(and(pub, eq(reports.reportType, "paid"))).orderBy(desc(reports.createdAt)).limit(1),
+          d.select().from(reports).where(and(pub, eq(reports.reportType, "paid"))).orderBy(desc(reports.amount)).limit(1),
+        ]);
+        const total = hdr?.total ?? 0;
+        const c = hdr?.cities ?? 0;
+        const ref = hdr;
         return {
           totalReports: Number(total),
           citiesCovered: n(c),

@@ -5,6 +5,7 @@ import { formatINR, pct } from "@/lib/format";
 
 export const metadata: Metadata = { title: "Know before you go" };
 export const dynamic = "force-dynamic";
+export const maxDuration = 30;
 
 export default async function PrepPage() {
   const [depts, refusals, stats] = await Promise.all([store.deptStats(), store.refusalStats(), store.siteStats()]);

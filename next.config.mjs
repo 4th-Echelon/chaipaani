@@ -38,6 +38,12 @@ const nextConfig = {
         { key: "Cross-Origin-Opener-Policy", value: "same-origin" },
       ],
     },
+    // Public pages are rendered on demand but cached at Vercel's CDN for a minute,
+    // so a burst of visitors costs one database round trip, not one per visitor.
+    { source: "/", headers: [{ key: "Cache-Control", value: "public, s-maxage=60, stale-while-revalidate=300" }] },
+    { source: "/(cities|compare|data|dept|know-before-you-go|reports)", headers: [{ key: "Cache-Control", value: "public, s-maxage=60, stale-while-revalidate=300" }] },
+    { source: "/(dept|reports)/(.*)", headers: [{ key: "Cache-Control", value: "public, s-maxage=60, stale-while-revalidate=300" }] },
+    { source: "/api/(stats|departments|cities|compare|trending)(.*)", headers: [{ key: "Cache-Control", value: "public, s-maxage=60, stale-while-revalidate=300" }] },
     { source: "/admin/(.*)", headers: [{ key: "Cache-Control", value: "no-store" }, { key: "X-Robots-Tag", value: "noindex" }] },
     { source: "/api/admin/(.*)", headers: [{ key: "Cache-Control", value: "no-store" }] },
   ],

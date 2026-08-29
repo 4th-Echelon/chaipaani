@@ -5,6 +5,7 @@ import { formatINR, pct } from "@/lib/format";
 
 export const metadata: Metadata = { title: "Departments" };
 export const dynamic = "force-dynamic";
+export const maxDuration = 30;
 
 export default async function DeptIndex() {
   const depts = await store.deptStats();

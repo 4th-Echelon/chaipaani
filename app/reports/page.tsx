@@ -5,6 +5,7 @@ import { DEPARTMENTS, STATES, store } from "@/lib/data";
 
 export const metadata: Metadata = { title: "Reports" };
 export const dynamic = "force-dynamic";
+export const maxDuration = 30;
 
 type SP = Record<string, string | string[] | undefined>;
 const s = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v) ?? "";

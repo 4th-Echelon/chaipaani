@@ -1,5 +1,6 @@
-import Link from "next/link";
+﻿import Link from "next/link";
 import { store, DEPARTMENTS } from "@/lib/data";
+import type { SiteStats } from "@/lib/types";
 import { formatINR, longDate, pct, timeAgo } from "@/lib/format";
 import ReportCard from "@/components/ReportCard";
 import StateLedger from "@/components/StateLedger";
@@ -7,12 +8,14 @@ import DeptBars from "@/components/DeptBars";
 import FAQ from "@/components/FAQ";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 30;
 
 export default async function HomePage() {
   // One slow or failing aggregate must not take the whole homepage down.
   const safe = <T,>(p: Promise<T>, fallback: T) => p.catch(() => fallback);
+  const emptyStats: SiteStats = { totalReports: 0, citiesCovered: 0, refusedGotServiceRate: 0, topDepartments: [] };
   const [stats, states, feed, cities, refusals, trending] = await Promise.all([
-    store.siteStats(),
+    safe(store.siteStats(), emptyStats),
     safe(store.stateStats(), []),
     safe(store.listReports({ limit: 5 }), { reports: [], total: 0, page: 1, limit: 5 }),
     safe(store.cityStats(5), []),

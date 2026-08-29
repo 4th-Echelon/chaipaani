@@ -33,7 +33,24 @@ export function rowsOf<T>(res: unknown): T[] {
   return r.rows ?? [];
 }
 
+/** Serverless filesystems are read-only: an embedded database there hangs instead of failing. */
+function onServerlessHost(): boolean {
+  return Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.NETLIFY);
+}
+
+export const BOOT_TIMEOUT_MS = Number(process.env.DB_BOOT_TIMEOUT_MS ?? 15_000);
+
+function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(`${what} exceeded ${ms} ms`)), ms);
+    p.then((v) => { clearTimeout(t); resolve(v); }, (e) => { clearTimeout(t); reject(e); });
+  });
+}
+
 async function createDb(): Promise<Db> {
+  if (!process.env.DATABASE_URL && onServerlessHost()) {
+    throw new Error("DATABASE_URL is not set. Add it to the hosting provider's environment variables and redeploy.");
+  }
   if (process.env.DATABASE_URL) {
     const { drizzle } = await import("drizzle-orm/postgres-js");
     const postgres = (await import("postgres")).default;
@@ -84,11 +101,16 @@ export async function migrate(db: Db): Promise<void> {
 export function getDb(): Promise<Db> {
   if (g.__cpDb) return Promise.resolve(g.__cpDb);
   if (!g.__cpDbReady) {
-    g.__cpDbReady = (async () => {
+    g.__cpDbReady = withTimeout((async () => {
       try {
         const db = await createDb();
-        if (process.env.RUN_MIGRATIONS_ON_BOOT !== "0") await migrate(db);
-        if (process.env.NODE_ENV !== "test" && process.env.SEED_ON_BOOT !== "0") {
+        // Production boots must be cheap: migrate and seed out of band
+        // (`npm run db:migrate`, `npm run db:seed`) unless explicitly enabled.
+        const prod = process.env.NODE_ENV === "production";
+        const migrateOnBoot = process.env.RUN_MIGRATIONS_ON_BOOT ?? (prod ? "0" : "1");
+        const seedOnBoot = process.env.SEED_ON_BOOT ?? (prod ? "0" : "1");
+        if (migrateOnBoot !== "0") await migrate(db);
+        if (process.env.NODE_ENV !== "test" && seedOnBoot !== "0") {
           const { ensureSeeded } = await import("./seed");
           await ensureSeeded(db);
         }
@@ -101,7 +123,10 @@ export function getDb(): Promise<Db> {
         g.__cpExec = undefined;
         throw err;
       }
-    })();
+    })(), BOOT_TIMEOUT_MS, "Database boot").catch((err) => {
+      g.__cpDbReady = undefined;
+      throw err;
+    });
   }
   return g.__cpDbReady;
 }

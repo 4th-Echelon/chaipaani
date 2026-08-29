@@ -2,6 +2,7 @@ import { listTakedowns, queue } from "@/lib/admin/moderation";
 import { formatINR, longDate } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 30;
 
 const STATUSES = ["held", "published", "removed"] as const;
 
