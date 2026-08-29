@@ -19,6 +19,7 @@
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.8",
+    "@vercel/functions": "^3.9.5",
     "drizzle-orm": "^0.45.2",
     "next": "^14.2.35",
     "pdf-parse": "^2.4.5",
