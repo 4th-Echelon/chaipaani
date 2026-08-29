@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/lib/db/client";
 import { store } from "@/lib/data";
+import { readSnapshots, SNAPSHOT_KEYS } from "@/lib/stats/store";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -41,7 +42,12 @@ export async function GET(req: NextRequest) {
     probes.push(await probe("cityStats", () => store.cityStats(5)));
     probes.push(await probe("refusalStats", () => store.refusalStats()));
     probes.push(await probe("trending", () => store.trending(4)));
-    return NextResponse.json({ ...base, reports: reports?.n ?? 0, probes, ms: Date.now() - started });
+    const snaps = await readSnapshots(SNAPSHOT_KEYS, db);
+    const snapshots = SNAPSHOT_KEYS.map((key) => {
+      const r = snaps.find((x) => x.key === key);
+      return r ? { key, ageSeconds: Math.round((Date.now() - r.updatedAt.getTime()) / 1000), computed_ms: r.computedMs } : { key, ageSeconds: null, computed_ms: null };
+    });
+    return NextResponse.json({ ...base, reports: reports?.n ?? 0, probes, snapshots, ms: Date.now() - started });
   } catch (err) {
     const e = err as Error & { cause?: Error & { code?: string } };
     return NextResponse.json(

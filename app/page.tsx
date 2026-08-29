@@ -16,17 +16,18 @@ export default async function HomePage() {
   const safe = <T,>(p: Promise<T>, fallback: T) =>
     Promise.race([p, new Promise<T>((res) => setTimeout(() => res(fallback), 8_000).unref?.())]).catch(() => fallback);
   const emptyStats: SiteStats = { totalReports: 0, citiesCovered: 0, refusedGotServiceRate: 0, topDepartments: [] };
-  const [stats, states, feed, cities, refusals, trending] = await Promise.all([
+  const [stats, states, feed, cities, refusals, trending, age] = await Promise.all([
     safe(store.siteStats(), emptyStats),
     safe(store.stateStats(), []),
     safe(store.listReports({ limit: 5 }), { reports: [], total: 0, page: 1, limit: 5 }),
     safe(store.cityStats(5), []),
     safe(store.refusalStats(), []),
     safe(store.trending(4), []),
+    safe(store.snapshotAge(), null),
   ]);
   const latest = stats.latest;
   const now = Date.now();
-  const updatedAt = new Date().toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit", timeZone: "Asia/Kolkata" });
+  const updatedAt = age === null ? "just now" : age < 90 ? "less than a minute ago" : age < 5400 ? `${Math.round(age / 60)} min ago` : `${Math.round(age / 3600)} h ago`;
   const opts = DEPARTMENTS.filter((d) => d.slug !== "other");
 
   return (

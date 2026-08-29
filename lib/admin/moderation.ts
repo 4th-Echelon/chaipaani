@@ -2,6 +2,7 @@ import { and, count, desc, eq, inArray } from "drizzle-orm";
 import { getDb, type Db } from "../db/client";
 import { moderationLog, reports, takedowns } from "../db/schema";
 import { invalidateCache, loadDepartments, rowToReport } from "../data";
+import { scheduleStatsRefresh } from "../stats/trigger";
 import { corroborate } from "../reporting/corroborate";
 import { scrub } from "../reporting/pii";
 import type { Report } from "../types";
@@ -39,6 +40,7 @@ export async function act(ref: string, action: ModAction, actor: string, reason:
   await d.insert(moderationLog).values({ reportId: r.id, actor, action, reason: reason ?? null, before: { status: r.status }, after: { status: next } });
   if (next === "published") await corroborate(r.id, d);
   invalidateCache();
+  scheduleStatsRefresh();
   return { id: r.id, public_id: r.publicId, status: next };
 }
 
@@ -63,6 +65,7 @@ export async function edit(ref: string, patch: Partial<Record<Editable, unknown>
   await d.update(reports).set({ ...set, updatedAt: new Date() }).where(eq(reports.id, r.id));
   await d.insert(moderationLog).values({ reportId: r.id, actor, action: "edit", reason: reason ?? null, before, after });
   invalidateCache();
+  scheduleStatsRefresh();
   return { id: r.id, public_id: r.publicId, changed: Object.keys(set) };
 }
 
@@ -83,6 +86,7 @@ export async function fileTakedown(input: { report: string; requester_kind: stri
     await d.update(reports).set({ status: "held", updatedAt: new Date() }).where(eq(reports.id, r.id));
     await d.insert(moderationLog).values({ reportId: r.id, actor: "system", action: "hold", reason: `takedown:${t.id}` });
     invalidateCache();
+  scheduleStatsRefresh();
   }
   return { takedown_id: t.id, report_public_id: r.publicId, status: "held" };
 }

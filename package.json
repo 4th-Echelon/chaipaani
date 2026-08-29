@@ -14,7 +14,8 @@
     "db:generate": "drizzle-kit generate",
     "db:seed": "tsx scripts/db-seed.ts",
     "jobs:corroborate": "tsx scripts/jobs-corroborate.ts",
-    "jobs:dump": "tsx scripts/jobs-dump.ts"
+    "jobs:dump": "tsx scripts/jobs-dump.ts",
+    "jobs:refresh-stats": "tsx scripts/jobs-refresh-stats.ts"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.8",

@@ -5,6 +5,7 @@
  * and lib/admin; the store only exposes plain reads plus a low-level insert.
  */
 import { and, asc, count, desc, eq, gte, ilike, inArray, lte, or, sql } from "drizzle-orm";
+import { readSnapshots, upsertSnapshot, snapshotAgeSeconds, type SnapshotKey } from "./stats/store";
 import { getDb, rowsOf, type Db } from "./db/client";
 import { cities, departments, reports, states } from "./db/schema";
 import { DEPARTMENT_SEED, STATE_NAMES, resolveStateCode, stateName } from "./db/taxonomy";
@@ -25,6 +26,8 @@ export interface DataStore {
   deptStats(): Promise<DeptStat[]>;
   deptStat(slug: string): Promise<DeptStat | null>;
   trending(limit?: number): Promise<Report[]>;
+  /** Seconds since the oldest statistics snapshot, or null before the first refresh. */
+  snapshotAge(): Promise<number | null>;
   invalidate(): void;
 }
 
@@ -107,6 +110,175 @@ export function _resetDeptCache(): void {
 
 const n = (v: unknown) => Number(v ?? 0);
 
+
+// ---------- live aggregates (used only by the snapshot refresh, or on a cold DB) ----------
+
+export async function computeSiteStats(d: Db): Promise<SiteStats> {
+  await loadDepartments(d);
+  const pub = eq(reports.status, "published");
+  const [[hdr], top, [latest], [featured]] = await Promise.all([
+    d
+      .select({
+        total: count(),
+        cities: sql<number>`count(distinct lower(${reports.cityText}) || '|' || ${reports.stateCode})`,
+        refused: sql<number>`count(*) filter (where ${reports.reportType} = 'refused')`,
+        got: sql<number>`count(*) filter (where ${reports.outcome} = 'refused_got_service')`,
+      })
+      .from(reports)
+      .where(pub),
+    d
+      .select({ id: reports.departmentId, c: count() })
+      .from(reports)
+      .where(pub)
+      .groupBy(reports.departmentId)
+      .orderBy(desc(count()))
+      .limit(5),
+    d.select().from(reports).where(and(pub, eq(reports.reportType, "paid"))).orderBy(desc(reports.createdAt)).limit(1),
+    d.select().from(reports).where(and(pub, eq(reports.reportType, "paid"))).orderBy(desc(reports.amount)).limit(1),
+  ]);
+  const total = hdr?.total ?? 0;
+  const c = hdr?.cities ?? 0;
+  const ref = hdr;
+  return {
+    totalReports: Number(total),
+    citiesCovered: n(c),
+    refusedGotServiceRate: n(ref?.refused) ? n(ref.got) / n(ref.refused) : 0,
+    topDepartments: top.map((t) => ({ slug: deptById.get(t.id)?.slug ?? "other", name: deptById.get(t.id)?.name ?? "Other", count: Number(t.c) })),
+    latest: latest ? rowToReport(latest) : undefined,
+    featured: featured ? rowToReport(featured) : undefined,
+  } satisfies SiteStats;
+}
+
+export async function computeStateStats(d: Db): Promise<StateStat[]> {
+  await loadDepartments(d);
+  const rows = rowsOf<{ state_code: string; c: number; avg_amount: number | null; refusal_rate: number; top_dept: number | null }>(
+    await d.execute(sql`
+      with pub as (
+        select state_code, report_type, amount, department_id from reports where status = 'published'
+      ),
+      agg as (
+        select state_code,
+               count(*)::int as c,
+               round(avg(amount) filter (where report_type = 'paid'))::int as avg_amount,
+               (count(*) filter (where report_type = 'refused'))::float / count(*) as refusal_rate
+        from pub group by state_code
+      ),
+      top as (
+        select distinct on (state_code) state_code, department_id
+        from (select state_code, department_id, count(*) as dc from pub group by state_code, department_id) t
+        order by state_code, dc desc, department_id
+      )
+      select agg.state_code, agg.c, agg.avg_amount, agg.refusal_rate, top.department_id as top_dept
+      from agg left join top using (state_code)
+      order by agg.c desc, agg.state_code asc`),
+  );
+  return rows.map((r) => ({
+    state: stateName(r.state_code),
+    count: n(r.c),
+    avgAmount: n(r.avg_amount),
+    refusalRate: n(r.refusal_rate),
+    topDepartment: r.top_dept ? deptById.get(Number(r.top_dept))?.name : undefined,
+  })) satisfies StateStat[];
+}
+
+export async function computeCityStats(d: Db, limit = 50): Promise<CityStat[]> {
+  await loadDepartments(d);
+  const rows = rowsOf<{ city: string; state_code: string; c: number; total: number; top_dept: number | null }>(
+    await d.execute(sql`
+      with pub as (
+        select lower(city_text) as ck, city_text as city, state_code, amount, department_id
+        from reports where status = 'published'
+      ),
+      agg as (
+        select ck, min(city) as city, state_code, count(*)::int as c, coalesce(sum(amount),0)::bigint as total
+        from pub group by ck, state_code
+      ),
+      top as (
+        select distinct on (ck, state_code) ck, state_code, department_id
+        from (select ck, state_code, department_id, count(*) as dc from pub group by ck, state_code, department_id) t
+        order by ck, state_code, dc desc, department_id
+      )
+      select agg.city, agg.state_code, agg.c, agg.total, top.department_id as top_dept
+      from agg left join top using (ck, state_code)
+      order by agg.total desc limit ${limit}`),
+  );
+  return rows.map((r) => ({
+    city: r.city,
+    state: stateName(r.state_code),
+    count: n(r.c),
+    totalAmount: n(r.total),
+    topDepartment: r.top_dept ? deptById.get(Number(r.top_dept))?.name : undefined,
+  })) satisfies CityStat[];
+}
+
+export async function computeRefusalStats(d: Db): Promise<RefusalStat[]> {
+  const rows = rowsOf<{ state_code: string; refused: number; got: number }>(
+    await d.execute(sql`
+      select state_code, count(*)::int as refused, (count(*) filter (where outcome = 'refused_got_service'))::int as got
+      from reports where status = 'published' and report_type = 'refused'
+      group by state_code`),
+  );
+  return rows
+    .map((r) => ({ state: stateName(r.state_code), refused: n(r.refused), gotService: n(r.got), successRate: n(r.refused) ? n(r.got) / n(r.refused) : 0 }))
+    .sort((a, b) => b.successRate - a.successRate || b.refused - a.refused) satisfies RefusalStat[];
+}
+
+export async function computeDeptStats(d: Db): Promise<DeptStat[]> {
+  await loadDepartments(d);
+  const rows = rowsOf<{ department_id: number; c: number; avg_amount: number | null; median_amount: number | null; refused: number; got: number }>(
+    await d.execute(sql`
+      select department_id, count(*)::int as c,
+             round(avg(amount) filter (where report_type='paid'))::int as avg_amount,
+             (percentile_cont(0.5) within group (order by amount) filter (where report_type='paid'))::int as median_amount,
+             (count(*) filter (where report_type='refused'))::int as refused,
+             (count(*) filter (where outcome='refused_got_service'))::int as got
+      from reports where status='published' group by department_id`),
+  );
+  const by = new Map(rows.map((r) => [Number(r.department_id), r]));
+  return DEPARTMENTS.filter((x) => x.slug !== "other")
+    .map((x) => {
+      const r = by.get(deptIdBySlug.get(x.slug) ?? -1);
+      const c = n(r?.c);
+      return {
+        slug: x.slug,
+        name: x.name,
+        count: c,
+        avgAmount: n(r?.avg_amount),
+        medianAmount: n(r?.median_amount),
+        refusalRate: c ? n(r?.refused) / c : 0,
+        refusalSuccessRate: n(r?.refused) ? n(r?.got) / n(r?.refused) : 0,
+      };
+    })
+    .sort((a, b) => b.count - a.count) satisfies DeptStat[];
+}
+
+export async function computeTrending(d: Db, limit = 12): Promise<Report[]> {
+  await loadDepartments(d);
+  const rows = await d
+    .select()
+    .from(reports)
+    .where(eq(reports.status, "published"))
+    .orderBy(desc(reports.helpfulCount), desc(reports.amount), asc(reports.createdAt))
+    .limit(limit);
+  return rows.map((r) => rowToReport(r));
+}
+
+/**
+ * Serve a statistic from its stored snapshot. Only when no snapshot exists at
+ * all (fresh database) is the aggregate run live, once, and then stored.
+ */
+async function fromSnapshot<T>(key: SnapshotKey, compute: (d: Db) => Promise<T>): Promise<T> {
+  return cached(`snap:${key}`, async () => {
+    const d = await getDb();
+    const [row] = await readSnapshots([key], d);
+    if (row) return row.value as T;
+    const t0 = Date.now();
+    const value = await compute(d);
+    await upsertSnapshot(key, value, Date.now() - t0, d).catch(() => undefined);
+    return value;
+  });
+}
+
 export function createDbStore(): DataStore {
   const db = () => getDb();
 
@@ -177,171 +349,23 @@ export function createDbStore(): DataStore {
       return rowToReport(row, size);
     },
 
-    siteStats: () =>
-      cached("site", async () => {
-        const d = await db();
-        await loadDepartments(d);
-        const pub = eq(reports.status, "published");
-        const [[hdr], top, [latest], [featured]] = await Promise.all([
-          d
-            .select({
-              total: count(),
-              cities: sql<number>`count(distinct lower(${reports.cityText}) || '|' || ${reports.stateCode})`,
-              refused: sql<number>`count(*) filter (where ${reports.reportType} = 'refused')`,
-              got: sql<number>`count(*) filter (where ${reports.outcome} = 'refused_got_service')`,
-            })
-            .from(reports)
-            .where(pub),
-          d
-            .select({ id: reports.departmentId, c: count() })
-            .from(reports)
-            .where(pub)
-            .groupBy(reports.departmentId)
-            .orderBy(desc(count()))
-            .limit(5),
-          d.select().from(reports).where(and(pub, eq(reports.reportType, "paid"))).orderBy(desc(reports.createdAt)).limit(1),
-          d.select().from(reports).where(and(pub, eq(reports.reportType, "paid"))).orderBy(desc(reports.amount)).limit(1),
-        ]);
-        const total = hdr?.total ?? 0;
-        const c = hdr?.cities ?? 0;
-        const ref = hdr;
-        return {
-          totalReports: Number(total),
-          citiesCovered: n(c),
-          refusedGotServiceRate: n(ref?.refused) ? n(ref.got) / n(ref.refused) : 0,
-          topDepartments: top.map((t) => ({ slug: deptById.get(t.id)?.slug ?? "other", name: deptById.get(t.id)?.name ?? "Other", count: Number(t.c) })),
-          latest: latest ? rowToReport(latest) : undefined,
-          featured: featured ? rowToReport(featured) : undefined,
-        } satisfies SiteStats;
-      }),
 
-    stateStats: () =>
-      cached("states", async () => {
-        const d = await db();
-        await loadDepartments(d);
-        const rows = rowsOf<{ state_code: string; c: number; avg_amount: number | null; refusal_rate: number; top_dept: number | null }>(
-          await d.execute(sql`
-            with pub as (
-              select state_code, report_type, amount, department_id from reports where status = 'published'
-            ),
-            agg as (
-              select state_code,
-                     count(*)::int as c,
-                     round(avg(amount) filter (where report_type = 'paid'))::int as avg_amount,
-                     (count(*) filter (where report_type = 'refused'))::float / count(*) as refusal_rate
-              from pub group by state_code
-            ),
-            top as (
-              select distinct on (state_code) state_code, department_id
-              from (select state_code, department_id, count(*) as dc from pub group by state_code, department_id) t
-              order by state_code, dc desc, department_id
-            )
-            select agg.state_code, agg.c, agg.avg_amount, agg.refusal_rate, top.department_id as top_dept
-            from agg left join top using (state_code)
-            order by agg.c desc, agg.state_code asc`),
-        );
-        return rows.map((r) => ({
-          state: stateName(r.state_code),
-          count: n(r.c),
-          avgAmount: n(r.avg_amount),
-          refusalRate: n(r.refusal_rate),
-          topDepartment: r.top_dept ? deptById.get(Number(r.top_dept))?.name : undefined,
-        })) satisfies StateStat[];
-      }),
 
-    cityStats: (limit = 10) =>
-      cached(`cities:${limit}`, async () => {
-        const d = await db();
-        await loadDepartments(d);
-        const rows = rowsOf<{ city: string; state_code: string; c: number; total: number; top_dept: number | null }>(
-          await d.execute(sql`
-            with pub as (
-              select lower(city_text) as ck, city_text as city, state_code, amount, department_id
-              from reports where status = 'published'
-            ),
-            agg as (
-              select ck, min(city) as city, state_code, count(*)::int as c, coalesce(sum(amount),0)::bigint as total
-              from pub group by ck, state_code
-            ),
-            top as (
-              select distinct on (ck, state_code) ck, state_code, department_id
-              from (select ck, state_code, department_id, count(*) as dc from pub group by ck, state_code, department_id) t
-              order by ck, state_code, dc desc, department_id
-            )
-            select agg.city, agg.state_code, agg.c, agg.total, top.department_id as top_dept
-            from agg left join top using (ck, state_code)
-            order by agg.total desc limit ${limit}`),
-        );
-        return rows.map((r) => ({
-          city: r.city,
-          state: stateName(r.state_code),
-          count: n(r.c),
-          totalAmount: n(r.total),
-          topDepartment: r.top_dept ? deptById.get(Number(r.top_dept))?.name : undefined,
-        })) satisfies CityStat[];
-      }),
 
-    refusalStats: () =>
-      cached("refusal", async () => {
-        const d = await db();
-        const rows = rowsOf<{ state_code: string; refused: number; got: number }>(
-          await d.execute(sql`
-            select state_code, count(*)::int as refused, (count(*) filter (where outcome = 'refused_got_service'))::int as got
-            from reports where status = 'published' and report_type = 'refused'
-            group by state_code`),
-        );
-        return rows
-          .map((r) => ({ state: stateName(r.state_code), refused: n(r.refused), gotService: n(r.got), successRate: n(r.refused) ? n(r.got) / n(r.refused) : 0 }))
-          .sort((a, b) => b.successRate - a.successRate || b.refused - a.refused) satisfies RefusalStat[];
-      }),
 
-    deptStats: () =>
-      cached("depts", async () => {
-        const d = await db();
-        await loadDepartments(d);
-        const rows = rowsOf<{ department_id: number; c: number; avg_amount: number | null; median_amount: number | null; refused: number; got: number }>(
-          await d.execute(sql`
-            select department_id, count(*)::int as c,
-                   round(avg(amount) filter (where report_type='paid'))::int as avg_amount,
-                   (percentile_cont(0.5) within group (order by amount) filter (where report_type='paid'))::int as median_amount,
-                   (count(*) filter (where report_type='refused'))::int as refused,
-                   (count(*) filter (where outcome='refused_got_service'))::int as got
-            from reports where status='published' group by department_id`),
-        );
-        const by = new Map(rows.map((r) => [Number(r.department_id), r]));
-        return DEPARTMENTS.filter((x) => x.slug !== "other")
-          .map((x) => {
-            const r = by.get(deptIdBySlug.get(x.slug) ?? -1);
-            const c = n(r?.c);
-            return {
-              slug: x.slug,
-              name: x.name,
-              count: c,
-              avgAmount: n(r?.avg_amount),
-              medianAmount: n(r?.median_amount),
-              refusalRate: c ? n(r?.refused) / c : 0,
-              refusalSuccessRate: n(r?.refused) ? n(r?.got) / n(r?.refused) : 0,
-            };
-          })
-          .sort((a, b) => b.count - a.count) satisfies DeptStat[];
-      }),
+
+    siteStats: () => fromSnapshot<SiteStats>("site", computeSiteStats),
+    stateStats: () => fromSnapshot<StateStat[]>("states", computeStateStats),
+    cityStats: async (limit = 10) => (await fromSnapshot<CityStat[]>("cities", (d) => computeCityStats(d, 50))).slice(0, limit),
+    refusalStats: () => fromSnapshot<RefusalStat[]>("refusal", computeRefusalStats),
+    deptStats: () => fromSnapshot<DeptStat[]>("depts", computeDeptStats),
+    trending: async (limit = 5) => (await fromSnapshot<Report[]>("trending", (d) => computeTrending(d, 12))).slice(0, limit),
+    snapshotAge: () => snapshotAgeSeconds(),
 
     async deptStat(slug) {
       return (await this.deptStats()).find((x) => x.slug === slug) ?? null;
     },
 
-    trending: (limit = 5) =>
-      cached(`trending:${limit}`, async () => {
-        const d = await db();
-        await loadDepartments(d);
-        const rows = await d
-          .select()
-          .from(reports)
-          .where(eq(reports.status, "published"))
-          .orderBy(desc(reports.helpfulCount), desc(reports.amount), asc(reports.createdAt))
-          .limit(limit);
-        return rows.map((r) => rowToReport(r));
-      }),
   };
 }
 

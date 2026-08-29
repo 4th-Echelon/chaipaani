@@ -2,6 +2,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { getDb, type Db } from "../db/client";
 import { moderationLog, reports, votes } from "../db/schema";
 import { invalidateCache } from "../data";
+import { scheduleStatsRefresh } from "../stats/trigger";
 import { consume } from "./ratelimit";
 
 export const FAKE_HOLD_THRESHOLD = 5;
@@ -42,5 +43,6 @@ export async function castVote(reportRef: string, kind: "helpful" | "fake", vote
     held = true;
   }
   invalidateCache();
+  if (held) scheduleStatsRefresh();
   return { ok: true, id: target.id, public_id: target.publicId, helpful_count: row.helpful, fake_count: row.fake, held };
 }

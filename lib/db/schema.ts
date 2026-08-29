@@ -11,8 +11,7 @@ import {
   text,
   timestamp,
   uniqueIndex,
-  uuid,
-} from "drizzle-orm/pg-core";
+  uuid, } from "drizzle-orm/pg-core";
 
 export const reportTypeEnum = pgEnum("report_type", ["paid", "refused"]);
 export const modeEnum = pgEnum("payment_mode", ["cash", "upi", "other"]);
@@ -154,6 +153,14 @@ export const hashKeys = pgTable("hash_keys", {
   day: date("day").primaryKey(),
   key: text("key").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** Precomputed statistics read by public pages; refreshed by cron and after writes. */
+export const statsSnapshots = pgTable("stats_snapshots", {
+  key: text("key").primaryKey(),
+  value: jsonb("value").notNull(),
+  computedMs: integer("computed_ms").notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 export type ReportRow = typeof reports.$inferSelect;

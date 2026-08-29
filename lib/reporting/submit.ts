@@ -7,6 +7,7 @@ import { getDb, type Db } from "../db/client";
 import { cities, moderationLog, reports } from "../db/schema";
 import { resolveStateCode } from "../db/taxonomy";
 import { departmentId, invalidateCache } from "../data";
+import { scheduleStatsRefresh } from "../stats/trigger";
 import { corroborate } from "./corroborate";
 import { scrub } from "./pii";
 import { uniquePublicId } from "./publicId";
@@ -87,5 +88,6 @@ export async function submitReport(body: unknown, ctx: SubmitContext): Promise<S
     if (c.corroborated) tier = "corroborated";
   }
   invalidateCache();
+  scheduleStatsRefresh();
   return { ok: true, status: 201, report: { id: row.id, public_id: publicId, status, tier, held_reason: possibleName ? "possible_name" : undefined, redactions } };
 }
