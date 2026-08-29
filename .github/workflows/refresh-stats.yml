@@ -1,0 +1,18 @@
+# Refreshes the precomputed statistics snapshots on the deployed site.
+# Free replacement for Vercel Cron. Requires two repository secrets:
+#   SITE_URL     e.g. https://chaipani-sigma.vercel.app
+#   CRON_SECRET  the same value set in Vercel's environment variables
+name: Refresh stats snapshots
+on:
+  schedule:
+    - cron: "0 */6 * * *"
+  workflow_dispatch:
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call refresh endpoint
+        run: |
+          curl --fail --silent --show-error --max-time 90 \
+            -H "authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "${{ secrets.SITE_URL }}/api/cron/refresh-stats"

@@ -63,7 +63,7 @@ missing snapshot once and stores it.
 
 Snapshots are refreshed by:
 
-- Vercel Cron: `vercel.json` schedules `GET /api/cron/refresh-stats` every
+- Vercel Cron: `.github/workflows/refresh-stats.yml (GitHub Actions schedule; Vercel Cron is a paid feature)` schedules `GET /api/cron/refresh-stats` every
   10 minutes. Set `CRON_SECRET` in the project environment; Vercel sends it as
   `Authorization: Bearer <secret>`.
 - Writes: a successful report submission, an auto-hold from fake flags, and
