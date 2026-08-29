@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 export const metadata: Metadata = { title: "Terms" };
 
 const SECTIONS: [string, string][] = [
-  ["What this is", "Chai Paani (chaipaani.in) is a public, anonymous registry of self-reported bribe demands in India. Reports are allegations by anonymous members of the public. They are not verified facts, legal findings, or accusations by the operators of this site."],
+  ["What this is", "Chai Paani (chaipaani.fyi) is a public, anonymous registry of self-reported bribe demands in India. Reports are allegations by anonymous members of the public. They are not verified facts, legal findings, or accusations by the operators of this site."],
   ["Anonymity", "We do not collect names, emails, phone numbers, accounts or device fingerprints. Your IP address is one-way hashed with a secret that rotates daily and is used only to rate-limit abuse. Raw IPs are never written to disk or logs."],
   ["What you may not post", "Names or identifying details of any individual (officials included: use their role), phone numbers, UPI IDs, vehicle numbers, photographs, or anything you know to be false. Reports containing these are removed."],
   ["Permanence", "Published reports are permanent and included in public datasets. Because we hold no identity, we cannot verify a request to delete a report from its author. Reports are removed only through moderation."],

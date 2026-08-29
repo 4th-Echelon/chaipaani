@@ -3,6 +3,7 @@ import { store, DEPARTMENTS } from "@/lib/data";
 import type { SiteStats } from "@/lib/types";
 import { formatINR, longDate, pct, timeAgo } from "@/lib/format";
 import ReportCard from "@/components/ReportCard";
+import Logo from "@/components/Logo";
 import StateLedger from "@/components/StateLedger";
 import DeptBars from "@/components/DeptBars";
 import FAQ from "@/components/FAQ";
@@ -253,7 +254,7 @@ export default async function HomePage() {
             <Link href="/report" className="btn-primary mt-7">Report a bribe</Link>
           </div>
           <div className="border border-black p-6">
-            <h3 className="text-xl font-semibold">Keep Chai Paani free and independent</h3>
+            <h3 className="flex flex-wrap items-center gap-x-2 text-xl font-semibold">Keep <Logo height={22} /> free and independent</h3>
             <p className="my-2 mb-5 text-sm text-ash-dark">No ads, no paywalls, no strings. Server and moderation costs come out of pocket. Chip in to keep the data public and growing.</p>
             <a href="https://rzp.io/rzp/support-bribesfyi" className="btn-ghost" rel="noopener noreferrer">Support the project</a>
           </div>

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import Logo from "./Logo";
 
 const NAV = [
   { href: "/reports", label: "Reports" },
@@ -15,8 +16,8 @@ export default function Header() {
       style={{ background: "linear-gradient(180deg, var(--nv-deep-2), var(--nv-deep))" }}
     >
       <div className="container-x flex h-16 items-center gap-8">
-        <Link href="/" className="text-[17px] font-semibold tracking-tight text-[#ffffff]">
-          <b>Chai Paani</b>
+        <Link href="/" className="flex items-center text-[#ffffff]" aria-label="Chai Paani home">
+          <Logo height={40} />
         </Link>
         <nav aria-label="Primary" className="ml-auto hidden items-center gap-[26px] md:flex">
           {NAV.map((n) => (

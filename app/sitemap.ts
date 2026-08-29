@@ -1,7 +1,7 @@
 import type { MetadataRoute } from "next";
 import { DEPARTMENTS, store } from "@/lib/data";
 
-const site = process.env.NEXT_PUBLIC_SITE_URL ?? "https://chaipaani.in";
+const site = process.env.NEXT_PUBLIC_SITE_URL ?? "https://chaipaani.fyi";
 export const revalidate = 3600;
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import Logo from "./Logo";
 
 const LINKS = [
   ["/reports", "Reports"],
@@ -19,7 +20,7 @@ export default function Footer() {
         <div className="grid gap-12 py-14 pb-10 md:grid-cols-[5fr_7fr]">
           <div>
             <div className="text-[17px] font-semibold tracking-tight text-[#ffffff]">
-              <b>Chai Paani</b>
+              <span className="text-[#ffffff]"><Logo height={44} /></span>
             </div>
             <p className="mt-2.5 max-w-[36ch] text-sm text-nv-muted">Built in public. Data belongs to India.</p>
           </div>
