@@ -1,0 +1,99 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --font-sans: "Geist";
+  --font-mono: "Geist Mono";
+  --black: #101211;
+  --black-2: #17191a;
+  --black-3: #1d1f20;
+  --white: #f2f3ef;
+  --white-2: #e7e9e4;
+  --ash: #9a9e98;
+  --ash-dark: #5d625d;
+  --ash-light: #c4c7c1;
+  --line-dark: #2a2d2b;
+  --line-light: #d3d6d0;
+  /* night-vision phosphor, desaturated; header and footer only */
+  --nv-deep: #0c170f;
+  --nv-deep-2: #102013;
+  --nv: #8fd98a;
+  --nv-ink: #c9efc4;
+  --nv-line: #1f3a24;
+  --nv-muted: #6f9a6b;
+}
+
+html {
+  color-scheme: dark;
+  background: var(--black);
+  scroll-behavior: smooth;
+}
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after { transition: none !important; animation: none !important; }
+}
+
+body {
+  background-color: var(--black);
+  color: var(--white);
+  font-family: var(--font-sans), Geist, system-ui, sans-serif;
+  font-size: 15px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3 { letter-spacing: -0.02em; line-height: 1.1; text-wrap: balance; }
+
+*:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 3px;
+}
+
+::selection { background: var(--white); color: var(--black); }
+
+@layer components {
+  .container-x { @apply mx-auto w-full max-w-[1160px] px-6; }
+
+  /* Section surfaces */
+  .dark { background: var(--black); color: var(--white); }
+  .light { background: linear-gradient(180deg, #f7f8f4 0%, var(--white) 55%, var(--white-2) 100%); color: var(--black); }
+  .hero-surface { background: linear-gradient(180deg, var(--black-2) 0%, var(--black) 100%); }
+  .cta { background: linear-gradient(180deg, var(--white) 0%, #dfe2dc 100%); color: var(--black); }
+  .dark .muted { color: var(--ash); }
+  .light .muted, .cta .muted { color: var(--ash-dark); }
+  .dark .muted-2 { color: var(--ash-light); }
+  .light .muted-2, .cta .muted-2 { color: var(--ash-dark); }
+  .dark .hair { border-color: var(--line-dark); }
+  .light .hair, .cta .hair { border-color: var(--line-light); }
+  .dark .hair-strong { border-color: var(--white); }
+  .light .hair-strong, .cta .hair-strong { border-color: var(--black); }
+  .dark .bar-fill { background: var(--white); }
+  .light .bar-fill, .cta .bar-fill { background: var(--black); }
+
+  .label { @apply font-mono text-[11px] uppercase tracking-[0.12em]; }
+  .micro { @apply label text-ash; }
+  .mono { @apply font-mono tabular-nums; }
+
+  /* Buttons: one radius scale (sharp) */
+  .btn { @apply inline-flex h-11 items-center gap-2 whitespace-nowrap border px-5 text-sm font-medium transition-colors active:translate-y-px; }
+  .btn-primary { @apply btn border-white bg-white text-black hover:bg-[#ffffff]; }
+  .btn-ghost { @apply btn border-line-dark text-white hover:border-ash; }
+  .light .btn-primary, .cta .btn-primary { @apply border-black bg-black text-white hover:bg-[#000000]; }
+  .light .btn-ghost, .cta .btn-ghost { @apply border-ash-light text-black hover:border-black; }
+  .btn-nv { @apply btn h-[38px] border-nv bg-nv px-4 text-nv-deep hover:bg-[#a3e69e]; }
+
+  /* Legacy helpers, mapped to the new palette */
+  .rule { @apply border-t border-line-dark; }
+  .panel { @apply border border-line-dark bg-black-2; }
+  .light .panel { @apply border-line-light bg-transparent; }
+  .amount { @apply font-mono font-medium tabular-nums; }
+  .field { @apply h-11 w-full border border-line-dark bg-black px-3 text-sm text-white placeholder:text-ash-dark focus:border-ash; }
+  textarea.field { @apply h-auto py-2.5; }
+  .form-label { @apply mb-2 block text-[13px]; }
+  .tag { @apply inline-block border border-line-dark px-2 py-[3px] font-mono text-[11px] uppercase tracking-[0.06em] text-white; }
+  .tag-strong { @apply tag border-white bg-white text-black; }
+  .light .tag { @apply border-line-light text-black; }
+  .light .tag-strong { @apply border-black bg-black text-white; }
+  .chip { @apply tag; }
+}
