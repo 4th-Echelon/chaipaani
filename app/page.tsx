@@ -9,13 +9,15 @@ import FAQ from "@/components/FAQ";
 export const dynamic = "force-dynamic";
 
 export default async function HomePage() {
+  // One slow or failing aggregate must not take the whole homepage down.
+  const safe = <T,>(p: Promise<T>, fallback: T) => p.catch(() => fallback);
   const [stats, states, feed, cities, refusals, trending] = await Promise.all([
     store.siteStats(),
-    store.stateStats(),
-    store.listReports({ limit: 5 }),
-    store.cityStats(5),
-    store.refusalStats(),
-    store.trending(4),
+    safe(store.stateStats(), []),
+    safe(store.listReports({ limit: 5 }), { reports: [], total: 0, page: 1, limit: 5 }),
+    safe(store.cityStats(5), []),
+    safe(store.refusalStats(), []),
+    safe(store.trending(4), []),
   ]);
   const latest = stats.latest;
   const now = Date.now();

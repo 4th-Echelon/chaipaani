@@ -1,4 +1,4 @@
-import { type ParseResult, type Transaction, type TransactionParser, parseAmount, parseDate, UPI_ID_RE, UTR_RE } from "./base";
+﻿import { type ParseResult, type Transaction, type TransactionParser, parseAmount, parseDate, UPI_ID_RE, UTR_RE } from "./base";
 
 /**
  * Best-effort PDF statement parser. Extracts text with pdf-parse, then scans
@@ -7,22 +7,43 @@ import { type ParseResult, type Transaction, type TransactionParser, parseAmount
  */
 export type TextExtractor = (bytes: Uint8Array) => Promise<string>;
 
+/** Statement PDFs are a handful of pages; anything beyond this is not a UPI export. */
+export const MAX_PDF_PAGES = 30;
+/** Hard wall-clock cap for text extraction, so a malformed PDF cannot pin the worker. */
+export const PDF_TIMEOUT_MS = 8_000;
+
+function withTimeout<T>(p: Promise<T>, ms: number, onTimeout?: () => void): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => {
+      onTimeout?.();
+      reject(new Error(`PDF extraction exceeded ${ms} ms`));
+    }, ms);
+    p.then((v) => { clearTimeout(t); resolve(v); }, (e) => { clearTimeout(t); reject(e); });
+  });
+}
+
 async function defaultExtract(bytes: Uint8Array): Promise<string> {
+  // Cheap structural sanity check before handing bytes to the parser.
+  const head = Buffer.from(bytes.subarray(0, 8)).toString("latin1");
+  if (!head.startsWith("%PDF-")) throw new Error("Not a PDF");
   const mod: any = await import("pdf-parse");
   // pdf-parse v2 exposes a PDFParse class; v1 exports a function. Support both.
   if (mod.PDFParse) {
     const p = new mod.PDFParse({ data: bytes });
-    const res = await p.getText();
-    await p.destroy?.();
-    return typeof res === "string" ? res : res?.text ?? "";
+    try {
+      const res = await withTimeout<any>(p.getText({ last: MAX_PDF_PAGES }), PDF_TIMEOUT_MS, () => { void p.destroy?.(); });
+      return typeof res === "string" ? res : res?.text ?? "";
+    } finally {
+      try { await p.destroy?.(); } catch { /* already destroyed */ }
+    }
   }
   const fn = mod.default ?? mod;
-  const res = await fn(Buffer.from(bytes));
+  const res = await withTimeout<any>(fn(Buffer.from(bytes), { max: MAX_PDF_PAGES }), PDF_TIMEOUT_MS);
   return res?.text ?? "";
 }
 
 const DATE_RE = /\b(\d{4}-\d{2}-\d{2}|\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4}|\d{1,2}\s+[A-Za-z]{3,9},?\s+\d{4}|[A-Za-z]{3,9}\s+\d{1,2},?\s+\d{4})\b/;
-const AMOUNT_RE = /(?:₹|rs\.?|inr)\s*([\d,]+(?:\.\d{1,2})?)|\b([\d,]{3,}(?:\.\d{2})?)\b(?=\s*(?:dr|cr|debit|credit|$))/i;
+const AMOUNT_RE = /(?:â‚¹|rs\.?|inr)\s*([\d,]+(?:\.\d{1,2})?)|\b([\d,]{3,}(?:\.\d{2})?)\b(?=\s*(?:dr|cr|debit|credit|$))/i;
 
 export function extractFromText(text: string, provider = "pdf"): ParseResult {
   const out: Transaction[] = [];
@@ -43,7 +64,7 @@ export function extractFromText(text: string, provider = "pdf"): ParseResult {
       .replace(DATE_RE, " ")
       .replace(AMOUNT_RE, " ")
       .replace(UTR_RE, " ")
-      .replace(/₹|rs\.?|inr|debit|credit|\bdr\b|\bcr\b|paid to|upi/gi, " ")
+      .replace(/â‚¹|rs\.?|inr|debit|credit|\bdr\b|\bcr\b|paid to|upi/gi, " ")
       .replace(/\s+/g, " ")
       .trim()
       .slice(0, 80);

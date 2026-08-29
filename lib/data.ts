@@ -211,14 +211,24 @@ export function createDbStore(): DataStore {
         await loadDepartments(d);
         const rows = rowsOf<{ state_code: string; c: number; avg_amount: number | null; refusal_rate: number; top_dept: number | null }>(
           await d.execute(sql`
-            select r.state_code,
-                   count(*)::int as c,
-                   round(avg(r.amount) filter (where r.report_type = 'paid'))::int as avg_amount,
-                   (count(*) filter (where r.report_type = 'refused'))::float / count(*) as refusal_rate,
-                   (select department_id from reports r2 where r2.state_code = r.state_code and r2.status = 'published'
-                      group by department_id order by count(*) desc limit 1) as top_dept
-            from reports r where r.status = 'published'
-            group by r.state_code order by c desc, r.state_code asc`),
+            with pub as (
+              select state_code, report_type, amount, department_id from reports where status = 'published'
+            ),
+            agg as (
+              select state_code,
+                     count(*)::int as c,
+                     round(avg(amount) filter (where report_type = 'paid'))::int as avg_amount,
+                     (count(*) filter (where report_type = 'refused'))::float / count(*) as refusal_rate
+              from pub group by state_code
+            ),
+            top as (
+              select distinct on (state_code) state_code, department_id
+              from (select state_code, department_id, count(*) as dc from pub group by state_code, department_id) t
+              order by state_code, dc desc, department_id
+            )
+            select agg.state_code, agg.c, agg.avg_amount, agg.refusal_rate, top.department_id as top_dept
+            from agg left join top using (state_code)
+            order by agg.c desc, agg.state_code asc`),
         );
         return rows.map((r) => ({
           state: stateName(r.state_code),
@@ -235,11 +245,22 @@ export function createDbStore(): DataStore {
         await loadDepartments(d);
         const rows = rowsOf<{ city: string; state_code: string; c: number; total: number; top_dept: number | null }>(
           await d.execute(sql`
-            select r.city_text as city, r.state_code, count(*)::int as c, coalesce(sum(r.amount),0)::bigint as total,
-                   (select department_id from reports r2 where lower(r2.city_text) = lower(r.city_text) and r2.state_code = r.state_code and r2.status='published'
-                      group by department_id order by count(*) desc limit 1) as top_dept
-            from reports r where r.status = 'published'
-            group by r.city_text, r.state_code order by total desc limit ${limit}`),
+            with pub as (
+              select lower(city_text) as ck, city_text as city, state_code, amount, department_id
+              from reports where status = 'published'
+            ),
+            agg as (
+              select ck, min(city) as city, state_code, count(*)::int as c, coalesce(sum(amount),0)::bigint as total
+              from pub group by ck, state_code
+            ),
+            top as (
+              select distinct on (ck, state_code) ck, state_code, department_id
+              from (select ck, state_code, department_id, count(*) as dc from pub group by ck, state_code, department_id) t
+              order by ck, state_code, dc desc, department_id
+            )
+            select agg.city, agg.state_code, agg.c, agg.total, top.department_id as top_dept
+            from agg left join top using (ck, state_code)
+            order by agg.total desc limit ${limit}`),
         );
         return rows.map((r) => ({
           city: r.city,
