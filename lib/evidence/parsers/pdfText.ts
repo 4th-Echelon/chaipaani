@@ -1,4 +1,4 @@
-﻿import { type ParseResult, type Transaction, type TransactionParser, parseAmount, parseDate, UPI_ID_RE, UTR_RE } from "./base";
+import { type ParseResult, type Transaction, type TransactionParser, parseAmount, parseDate, UPI_ID_RE, UTR_RE } from "./base";
 
 /**
  * Best-effort PDF statement parser. Extracts text with pdf-parse, then scans

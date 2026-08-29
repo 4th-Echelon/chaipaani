@@ -1,4 +1,4 @@
-﻿import Link from "next/link";
+import Link from "next/link";
 import { store, DEPARTMENTS } from "@/lib/data";
 import type { SiteStats } from "@/lib/types";
 import { formatINR, longDate, pct, timeAgo } from "@/lib/format";
@@ -12,7 +12,9 @@ export const maxDuration = 30;
 
 export default async function HomePage() {
   // One slow or failing aggregate must not take the whole homepage down.
-  const safe = <T,>(p: Promise<T>, fallback: T) => p.catch(() => fallback);
+  // Each call gets 8 s; after that the section renders its fallback and the page still ships.
+  const safe = <T,>(p: Promise<T>, fallback: T) =>
+    Promise.race([p, new Promise<T>((res) => setTimeout(() => res(fallback), 8_000).unref?.())]).catch(() => fallback);
   const emptyStats: SiteStats = { totalReports: 0, citiesCovered: 0, refusedGotServiceRate: 0, topDepartments: [] };
   const [stats, states, feed, cities, refusals, trending] = await Promise.all([
     safe(store.siteStats(), emptyStats),
