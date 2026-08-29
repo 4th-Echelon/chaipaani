@@ -55,7 +55,10 @@ export async function submitReport(body: unknown, ctx: SubmitContext): Promise<S
   );
 
   const publicId = await uniquePublicId(async (id) => (await d.select({ id: reports.id }).from(reports).where(eq(reports.publicId, id)).limit(1)).length > 0);
-  const status = possibleName ? "held" : "published";
+  // Pre-moderation: every report waits for a moderator unless REQUIRE_APPROVAL=0.
+  const requireApproval = process.env.REQUIRE_APPROVAL !== "0";
+  const status: "held" | "published" = requireApproval || possibleName ? "held" : "published";
+  const heldReason = possibleName ? "possible_name" : requireApproval ? "pending_review" : undefined;
   const [row] = await d
     .insert(reports)
     .values({
@@ -80,7 +83,7 @@ export async function submitReport(body: unknown, ctx: SubmitContext): Promise<S
     .returning({ id: reports.id });
 
   if (status === "held") {
-    await d.insert(moderationLog).values({ reportId: row.id, actor: "system", action: "hold", reason: "possible_name" });
+    await d.insert(moderationLog).values({ reportId: row.id, actor: "system", action: "hold", reason: heldReason ?? "pending_review" });
   }
   let tier = "reported";
   if (status === "published") {
@@ -89,5 +92,5 @@ export async function submitReport(body: unknown, ctx: SubmitContext): Promise<S
   }
   invalidateCache();
   scheduleStatsRefresh();
-  return { ok: true, status: 201, report: { id: row.id, public_id: publicId, status, tier, held_reason: possibleName ? "possible_name" : undefined, redactions } };
+  return { ok: true, status: 201, report: { id: row.id, public_id: publicId, status, tier, held_reason: heldReason, redactions } };
 }

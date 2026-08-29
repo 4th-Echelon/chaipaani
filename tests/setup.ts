@@ -1,3 +1,5 @@
+// Pipeline tests exercise auto-publish; the approval flow has its own test file.
+process.env.REQUIRE_APPROVAL = "0";
 import { afterAll, beforeEach } from "vitest";
 import { getDb, resetDbForTests } from "../lib/db/client";
 import { seedTaxonomy } from "../lib/db/seed";

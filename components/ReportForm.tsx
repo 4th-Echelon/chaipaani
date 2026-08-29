@@ -83,10 +83,19 @@ export default function ReportForm({ departments, states }: { departments: Depar
       <div className="border border-line-dark p-6">
         <p className="label">Report received</p>
         <h2 className="mt-2 text-xl font-semibold">Reference {done.public_id}</h2>
-        <p className="mt-3 max-w-[60ch] text-sm text-ash-light">
-          Your report is held for a quick human check before it goes public. Our filter thought the description might contain a person&apos;s name. Chai
-          Paani never publishes names, so a moderator will confirm and publish it, usually within a day. Nothing about you was stored.
-        </p>
+        {done.held_reason === "possible_name" ? (
+          <p className="mt-3 max-w-[60ch] text-sm text-ash-light">
+            Your report is held for a human check before it goes public. Our filter thought the description might contain a person&apos;s name. Chai
+            Paani never publishes names, so a moderator will confirm and publish it, usually within a day. Nothing about you was stored.
+          </p>
+        ) : done.status === "held" ? (
+          <p className="mt-3 max-w-[60ch] text-sm text-ash-light">
+            Every report is read by a moderator before it appears on the site. This keeps spam and fake entries out of the registry. Yours is in the
+            queue and is usually published within a day. Keep the reference above if you want to look it up later. Nothing about you was stored.
+          </p>
+        ) : (
+          <p className="mt-3 max-w-[60ch] text-sm text-ash-light">Your report is live. Nothing about you was stored.</p>
+        )}
         {done.redactions.length > 0 && (
           <p className="mt-3 text-xs text-ash">Automatically removed before storing: {done.redactions.map((r) => `${r.kind} (${r.count})`).join(", ")}.</p>
         )}
