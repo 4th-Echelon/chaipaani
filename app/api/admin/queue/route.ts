@@ -10,9 +10,15 @@ export async function GET(req: NextRequest) {
   if ("res" in g) return g.res;
   const s = req.nextUrl.searchParams.get("status");
   const status = s === "published" || s === "removed" ? s : "held";
-  const rows = await queue(status);
+  const page = Math.max(1, Number(req.nextUrl.searchParams.get("page") ?? 1) || 1);
+  const limit = Math.min(100, Math.max(1, Number(req.nextUrl.searchParams.get("limit") ?? 25) || 25));
+  const q = await queue(status, undefined, limit, page);
+  const rows = q.rows;
   return ok({
     status,
+    page: q.page,
+    pages: q.pages,
+    total: q.total,
     reports: rows.map((r) => ({ ...publicReport(r), status: r.status, tier: r.tier, cluster_size: r.clusterSize ?? 0, redactions: r.scrub.redactions, possible_name: r.scrub.possibleName, ip_hash_prefix: r.ip_hash_prefix, last_reason: r.last_reason })),
   });
 }

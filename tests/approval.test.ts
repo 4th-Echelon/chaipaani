@@ -48,7 +48,7 @@ describe("pre-moderation (REQUIRE_APPROVAL default)", () => {
 
     // Visible in the moderation queue with the pending reason.
     const held = await queue("held", db);
-    const mine = held.find((r) => r.publicId === res.report.public_id);
+    const mine = held.rows.find((r) => r.publicId === res.report.public_id);
     expect(mine).toBeDefined();
     expect(mine?.last_reason).toBe("pending_review");
 

@@ -31,6 +31,8 @@ export const metadata: Metadata = {
     description: "Report a bribe anonymously. See what people really pay, by department and city.",
   },
   robots: { index: true, follow: true },
+  // Versioned so browsers that cached the previous icon per page URL pick up the new one.
+  icons: { icon: [{ url: "/favicon.ico?v=2", sizes: "48x48", type: "image/x-icon" }] },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

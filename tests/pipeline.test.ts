@@ -60,7 +60,7 @@ describe("reporting pipeline", () => {
     expect((await store.getReport(res.report.public_id, { includeHeld: true }))?.status).toBe("held");
     expect((await store.listReports({})).total).toBe(0);
 
-    const q = await queue("held", db);
+    const q = (await queue("held", db)).rows;
     expect(q).toHaveLength(1);
     expect(q[0].last_reason).toMatch(/fake_flags/);
 

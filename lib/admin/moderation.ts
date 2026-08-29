@@ -23,21 +23,60 @@ export async function queueCounts(db?: Db): Promise<Record<"held" | "published" 
   return out;
 }
 
-export async function queue(status: "held" | "published" | "removed" = "held", db?: Db, limit = 100) {
+export type QueueRow = Report & { scrub: ReturnType<typeof scrub>; ip_hash_prefix: string; last_reason: string | null };
+
+/**
+ * One page of the moderation queue. Three queries regardless of page size:
+ * the page of reports, cluster sizes for those reports, and the latest log
+ * entry per report (no per-row round trips, which timed out on serverless).
+ */
+export async function queue(
+  status: "held" | "published" | "removed" = "held",
+  db?: Db,
+  limit = 25,
+  page = 1,
+): Promise<{ rows: QueueRow[]; total: number; page: number; pages: number; limit: number }> {
   const d = db ?? (await getDb());
   await loadDepartments(d);
-  const rows = await d.select().from(reports).where(eq(reports.status, status)).orderBy(desc(reports.createdAt)).limit(limit);
-  const out: (Report & { scrub: ReturnType<typeof scrub>; ip_hash_prefix: string; last_reason: string | null })[] = [];
-  for (const r of rows) {
-    let size = 0;
-    if (r.clusterId) {
-      const [{ c }] = await d.select({ c: count() }).from(reports).where(and(eq(reports.clusterId, r.clusterId), eq(reports.status, "published")));
-      size = Number(c);
-    }
-    const last = (await d.select().from(moderationLog).where(eq(moderationLog.reportId, r.id)).orderBy(desc(moderationLog.createdAt)).limit(1))[0];
-    out.push({ ...rowToReport(r, size), scrub: scrub(r.note ?? ""), ip_hash_prefix: (r.ipHash ?? "").slice(0, 8), last_reason: last?.reason ?? null });
-  }
-  return out;
+  const [{ total }] = await d.select({ total: count() }).from(reports).where(eq(reports.status, status));
+  const pages = Math.max(1, Math.ceil(Number(total) / limit));
+  const p = Math.min(Math.max(1, page), pages);
+  const rows = await d
+    .select()
+    .from(reports)
+    .where(eq(reports.status, status))
+    .orderBy(desc(reports.createdAt))
+    .limit(limit)
+    .offset((p - 1) * limit);
+  if (rows.length === 0) return { rows: [], total: Number(total), page: p, pages, limit };
+
+  const ids = rows.map((r) => r.id);
+  const clusterIds = Array.from(new Set(rows.map((r) => r.clusterId).filter((c): c is string => Boolean(c))));
+  const [sizes, lastLogs] = await Promise.all([
+    clusterIds.length
+      ? d
+          .select({ clusterId: reports.clusterId, c: count() })
+          .from(reports)
+          .where(and(inArray(reports.clusterId, clusterIds), eq(reports.status, "published")))
+          .groupBy(reports.clusterId)
+      : Promise.resolve([] as { clusterId: string | null; c: number }[]),
+    d
+      .select({ reportId: moderationLog.reportId, reason: moderationLog.reason, createdAt: moderationLog.createdAt })
+      .from(moderationLog)
+      .where(inArray(moderationLog.reportId, ids))
+      .orderBy(desc(moderationLog.createdAt)),
+  ]);
+  const sizeBy = new Map(sizes.map((s) => [s.clusterId as string, Number(s.c)]));
+  const lastBy = new Map<string, string | null>();
+  for (const l of lastLogs) if (l.reportId && !lastBy.has(l.reportId)) lastBy.set(l.reportId, l.reason ?? null); // already newest-first
+
+  const out: QueueRow[] = rows.map((r) => ({
+    ...rowToReport(r, r.clusterId ? sizeBy.get(r.clusterId) ?? 0 : 0),
+    scrub: scrub(r.note ?? ""),
+    ip_hash_prefix: (r.ipHash ?? "").slice(0, 8),
+    last_reason: lastBy.get(r.id) ?? null,
+  }));
+  return { rows: out, total: Number(total), page: p, pages, limit };
 }
 
 export async function act(ref: string, action: ModAction, actor: string, reason: string | undefined, db?: Db) {

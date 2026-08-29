@@ -45,10 +45,12 @@ function Action({ id, action, label, back, primary = false }: { id: string; acti
   );
 }
 
-export default async function AdminPage({ searchParams }: { searchParams: { status?: string } }) {
+export default async function AdminPage({ searchParams }: { searchParams: { status?: string; page?: string } }) {
   const status: Status = (STATUSES as readonly string[]).includes(searchParams.status ?? "") ? (searchParams.status as Status) : "held";
-  const [rows, open, counts] = await Promise.all([queue(status), listTakedowns(undefined, true), queueCounts()]);
-  const back = `/admin?status=${status}`;
+  const pageNo = Math.max(1, Number(searchParams.page ?? 1) || 1);
+  const [q, open, counts] = await Promise.all([queue(status, undefined, 25, pageNo), listTakedowns(undefined, true), queueCounts()]);
+  const rows = q.rows;
+  const back = `/admin?status=${status}&page=${q.page}`;
   const now = Date.now();
 
   return (
@@ -114,7 +116,7 @@ export default async function AdminPage({ searchParams }: { searchParams: { stat
           <div className="mb-4 flex items-baseline justify-between">
             <h2 className="text-lg font-semibold">{TAB_LABEL[status]}</h2>
             <span className="muted text-sm">
-              {rows.length} shown{rows.length < counts[status] ? ` of ${counts[status]}` : ""}
+              {q.total === 0 ? "0 reports" : `${(q.page - 1) * q.limit + 1} to ${(q.page - 1) * q.limit + rows.length} of ${q.total}`}
             </span>
           </div>
 
@@ -189,6 +191,24 @@ export default async function AdminPage({ searchParams }: { searchParams: { stat
                 </li>
               ))}
             </ul>
+          )}
+
+          {q.pages > 1 && (
+            <nav className="mt-8 flex items-center justify-between border-t border-line-dark pt-4" aria-label="Pages">
+              {q.page > 1 ? (
+                <a href={`/admin?status=${status}&page=${q.page - 1}`} className="btn-ghost">Previous</a>
+              ) : (
+                <span />
+              )}
+              <span className="muted font-mono text-sm">
+                page {q.page} of {q.pages}
+              </span>
+              {q.page < q.pages ? (
+                <a href={`/admin?status=${status}&page=${q.page + 1}`} className="btn-ghost">Next</a>
+              ) : (
+                <span />
+              )}
+            </nav>
           )}
         </section>
       </div>
