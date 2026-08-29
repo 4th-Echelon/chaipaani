@@ -14,6 +14,15 @@ async function findReport(d: Db, ref: string) {
   return (await d.select().from(reports).where(isUuid ? eq(reports.id, ref) : eq(reports.publicId, ref.toUpperCase())).limit(1))[0];
 }
 
+/** Number of reports per status, for the queue tabs. */
+export async function queueCounts(db?: Db): Promise<Record<"held" | "published" | "removed", number>> {
+  const d = db ?? (await getDb());
+  const rows = await d.select({ status: reports.status, c: count() }).from(reports).groupBy(reports.status);
+  const out = { held: 0, published: 0, removed: 0 } as Record<"held" | "published" | "removed", number>;
+  for (const r of rows) out[r.status as keyof typeof out] = Number(r.c);
+  return out;
+}
+
 export async function queue(status: "held" | "published" | "removed" = "held", db?: Db, limit = 100) {
   const d = db ?? (await getDb());
   await loadDepartments(d);
