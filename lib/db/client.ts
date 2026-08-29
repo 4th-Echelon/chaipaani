@@ -37,7 +37,16 @@ async function createDb(): Promise<Db> {
   if (process.env.DATABASE_URL) {
     const { drizzle } = await import("drizzle-orm/postgres-js");
     const postgres = (await import("postgres")).default;
-    const client = postgres(process.env.DATABASE_URL, { max: 5, prepare: false });
+    const url = process.env.DATABASE_URL;
+    const client = postgres(url, {
+      // Serverless-friendly: few sockets, drop idle ones before the pooler does, fail fast.
+      max: Number(process.env.DB_POOL_MAX ?? 3),
+      idle_timeout: 20,
+      max_lifetime: 60 * 5,
+      connect_timeout: 10,
+      prepare: false, // required for Supabase/Neon transaction poolers
+      ssl: /sslmode=disable/.test(url) ? undefined : "require",
+    });
     g.__cpExec = async (t) => { await client.unsafe(t); };
     return drizzle(client, { schema }) as unknown as Db;
   }
@@ -53,9 +62,14 @@ async function createDb(): Promise<Db> {
 export async function migrate(db: Db): Promise<void> {
   await db.execute(sql`CREATE TABLE IF NOT EXISTS _migrations (name text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())`);
   const applied = new Set(rowsOf<{ name: string }>(await db.execute(sql`SELECT name FROM _migrations`)).map((r) => r.name));
-  const files = readdirSync(MIGRATIONS_DIR)
-    .filter((f) => f.endsWith(".sql"))
-    .sort();
+  let files: string[] = [];
+  try {
+    files = readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith(".sql")).sort();
+  } catch {
+    // Migrations folder not shipped with this build (serverless bundle). Assume the
+    // database was migrated out of band with `npm run db:migrate`.
+    return;
+  }
   for (const f of files) {
     if (applied.has(f)) continue;
     const body = readFileSync(path.join(MIGRATIONS_DIR, f), "utf8");
@@ -71,14 +85,22 @@ export function getDb(): Promise<Db> {
   if (g.__cpDb) return Promise.resolve(g.__cpDb);
   if (!g.__cpDbReady) {
     g.__cpDbReady = (async () => {
-      const db = await createDb();
-      await migrate(db);
-      if (process.env.NODE_ENV !== "test" && process.env.SEED_ON_BOOT !== "0") {
-        const { ensureSeeded } = await import("./seed");
-        await ensureSeeded(db);
+      try {
+        const db = await createDb();
+        if (process.env.RUN_MIGRATIONS_ON_BOOT !== "0") await migrate(db);
+        if (process.env.NODE_ENV !== "test" && process.env.SEED_ON_BOOT !== "0") {
+          const { ensureSeeded } = await import("./seed");
+          await ensureSeeded(db);
+        }
+        g.__cpDb = db;
+        return db;
+      } catch (err) {
+        // Never cache a failed boot: the next request must retry instead of
+        // replaying the same rejection for the life of the process.
+        g.__cpDbReady = undefined;
+        g.__cpExec = undefined;
+        throw err;
       }
-      g.__cpDb = db;
-      return db;
     })();
   }
   return g.__cpDbReady;
