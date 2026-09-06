@@ -78,6 +78,19 @@ export function rowToReport(r: Row, clusterSize?: number): Report {
   };
 }
 
+// ---------- search hygiene ----------
+
+/** Trim, cap, and drop terms too short to be meaningful. Returns "" when unusable. */
+export function normaliseSearchTerm(q: string | undefined): string {
+  const t = (q ?? "").trim().replace(/\s+/g, " ").slice(0, 80);
+  return t.length < 2 ? "" : t;
+}
+
+/** Escape LIKE/ILIKE wildcards so user input is matched literally (default escape char is backslash). */
+export function escapeLike(s: string): string {
+  return s.replace(/[\\%_]/g, (c) => "\\" + c);
+}
+
 // ---------- cache ----------
 
 const TTL_MS = 60_000;
@@ -302,9 +315,10 @@ export function createDbStore(): DataStore {
       if (q.type) where.push(eq(reports.reportType, q.type));
       if (q.minAmount) where.push(gte(reports.amount, q.minAmount));
       if (q.maxAmount) where.push(lte(reports.amount, q.maxAmount));
-      if (q.q) {
-        const needle = `%${q.q}%`;
-        const ids = [...deptById.entries()].filter(([, dd]) => dd.name.toLowerCase().includes(q.q!.toLowerCase())).map(([id]) => id);
+      const term = normaliseSearchTerm(q.q);
+      if (term) {
+        const needle = `%${escapeLike(term)}%`;
+        const ids = [...deptById.entries()].filter(([, dd]) => dd.name.toLowerCase().includes(term.toLowerCase())).map(([id]) => id);
         where.push(
           or(
             ilike(reports.service, needle),

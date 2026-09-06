@@ -107,7 +107,7 @@ describe("reporting pipeline", () => {
     const res = await submitReport(body, { ipHash: "ev", db });
     if (!res.ok) throw new Error("submit failed");
     const bytes = new Uint8Array(readFileSync(path.join(__dirname, "fixtures", "generic.csv")));
-    const a = await attachEvidence(res.report.public_id, { bytes, mime: "text/csv", filename: "s.csv" }, db);
+    const a = await attachEvidence(res.report.public_id, { bytes, mime: "text/csv", filename: "s.csv" }, db, undefined, { token: res.report.evidence_token });
     expect(a.ok && a.matched).toBe(true);
     expect((await store.getReport(res.report.public_id))?.tier).toBe("evidence_backed");
     const rows = (await db.execute("select utr_hash, amount from evidence_matches" as any)) as any;
@@ -118,7 +118,7 @@ describe("reporting pipeline", () => {
     // same UTR cannot back a second report
     const res2 = await submitReport(body, { ipHash: "ev2", db });
     if (!res2.ok) throw new Error("submit failed");
-    const b = await attachEvidence(res2.report.public_id, { bytes, mime: "text/csv", filename: "s.csv" }, db);
+    const b = await attachEvidence(res2.report.public_id, { bytes, mime: "text/csv", filename: "s.csv" }, db, undefined, { token: res2.report.evidence_token });
     expect(b.ok).toBe(false);
     if (!b.ok) expect(b.status).toBe(409);
   });

@@ -1,4 +1,4 @@
-import { and, count, desc, eq, inArray } from "drizzle-orm";
+import { and, count, desc, eq, gte, inArray } from "drizzle-orm";
 import { getDb, type Db } from "../db/client";
 import { moderationLog, reports, takedowns } from "../db/schema";
 import { invalidateCache, loadDepartments, rowToReport } from "../data";
@@ -117,26 +117,86 @@ export async function edit(ref: string, patch: Partial<Record<Editable, unknown>
   return { id: r.id, public_id: r.publicId, changed: Object.keys(set) };
 }
 
-export async function log(limit = 200, db?: Db) {
+/** Paginated audit log, newest first. */
+export async function log(limit = 50, db?: Db, page = 1) {
   const d = db ?? (await getDb());
-  return d.select().from(moderationLog).orderBy(desc(moderationLog.createdAt)).limit(limit);
+  const lim = Math.min(100, Math.max(1, limit));
+  const [{ total }] = await d.select({ total: count() }).from(moderationLog);
+  const pages = Math.max(1, Math.ceil(Number(total) / lim));
+  const p = Math.min(Math.max(1, page), pages);
+  const entries = await d
+    .select()
+    .from(moderationLog)
+    .orderBy(desc(moderationLog.createdAt))
+    .limit(lim)
+    .offset((p - 1) * lim);
+  return { entries, total: Number(total), page: p, pages, limit: lim };
 }
 
-export async function fileTakedown(input: { report: string; requester_kind: string; contact?: string; reason: string }, db?: Db) {
+/** Trim, drop control characters (newlines kept), collapse runs of spaces, cap length. */
+export function cleanText(input: unknown, max: number): string {
+  if (typeof input !== "string") return "";
+  return input
+    .replace(/[\u0000-\u0009\u000b-\u001f\u007f]/g, "")
+    .replace(/\r\n?/g, "\n")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim()
+    .slice(0, max);
+}
+
+/** A report is auto-held by at most one takedown per 30 days. */
+export const TAKEDOWN_REHOLD_WINDOW_MS = 30 * 86_400_000;
+
+export type TakedownResult = {
+  takedown_id: number;
+  report_public_id: string;
+  status: "held" | "published";
+  held: boolean;
+  merged: boolean;
+};
+
+/**
+ * Public takedown request. Policy:
+ *  - an OPEN request already exists: record nothing new, return it (merged).
+ *  - the last request was REJECTED within 30 days: record the request, log it,
+ *    but do not hold the report again (prevents hold-by-repetition).
+ *  - otherwise: record, hold the report, log.
+ */
+export async function fileTakedown(
+  input: { report: string; requester_kind: string; contact?: string; reason: string },
+  db?: Db,
+  now: Date = new Date(),
+): Promise<TakedownResult | null> {
   const d = db ?? (await getDb());
   const r = await findReport(d, input.report);
   if (!r || r.status === "removed") return null;
+  const reason = cleanText(input.reason, 2000);
+  const contact = cleanText(input.contact, 200) || null;
+  if (reason.length < 10) return null;
+
+  const existing = await d.select().from(takedowns).where(eq(takedowns.reportId, r.id)).orderBy(desc(takedowns.receivedAt)).limit(1);
+  const last = existing[0];
+  if (last && !last.decision) {
+    return { takedown_id: last.id, report_public_id: r.publicId, status: r.status as "held" | "published", held: r.status === "held", merged: true };
+  }
+  const recentlyRejected =
+    !!last && last.decision === "rejected" && !!last.decidedAt && now.getTime() - new Date(last.decidedAt).getTime() < TAKEDOWN_REHOLD_WINDOW_MS;
+
   const [t] = await d
     .insert(takedowns)
-    .values({ reportId: r.id, requesterKind: input.requester_kind, requesterContact: input.contact ?? null, reason: input.reason })
+    .values({ reportId: r.id, requesterKind: input.requester_kind, requesterContact: contact, reason })
     .returning({ id: takedowns.id });
-  if (r.status === "published") {
-    await d.update(reports).set({ status: "held", updatedAt: new Date() }).where(eq(reports.id, r.id));
-    await d.insert(moderationLog).values({ reportId: r.id, actor: "system", action: "hold", reason: `takedown:${t.id}` });
-    invalidateCache();
-  await refreshStatsNow();
+
+  if (recentlyRejected || r.status !== "published") {
+    await d.insert(moderationLog).values({ reportId: r.id, actor: "system", action: "takedown_noted", reason: `takedown:${t.id}` });
+    return { takedown_id: t.id, report_public_id: r.publicId, status: r.status as "held" | "published", held: r.status === "held", merged: false };
   }
-  return { takedown_id: t.id, report_public_id: r.publicId, status: "held" };
+  await d.update(reports).set({ status: "held", updatedAt: now }).where(eq(reports.id, r.id));
+  await d.insert(moderationLog).values({ reportId: r.id, actor: "system", action: "hold", reason: `takedown:${t.id}` });
+  invalidateCache();
+  await refreshStatsNow();
+  return { takedown_id: t.id, report_public_id: r.publicId, status: "held", held: true, merged: false };
 }
 
 export async function listTakedowns(db?: Db, open = true) {
@@ -154,4 +214,4 @@ export async function decideTakedown(id: number, decision: "upheld" | "rejected"
   return { takedown_id: id, decision, report: res };
 }
 
-export { inArray };
+export { inArray, gte };

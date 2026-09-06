@@ -11,6 +11,9 @@ export type TextExtractor = (bytes: Uint8Array) => Promise<string>;
 export const MAX_PDF_PAGES = 30;
 /** Hard wall-clock cap for text extraction, so a malformed PDF cannot pin the worker. */
 export const PDF_TIMEOUT_MS = 8_000;
+/** A statement is a few KB of text. Anything past this is a decompression bomb, not a statement. */
+export const MAX_PDF_TEXT_BYTES = 2 * 1024 * 1024;
+export const PDF_TOO_LARGE_WARNING = "PDF text is too large to be a statement export";
 
 function withTimeout<T>(p: Promise<T>, ms: number, onTimeout?: () => void): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -43,7 +46,7 @@ async function defaultExtract(bytes: Uint8Array): Promise<string> {
 }
 
 const DATE_RE = /\b(\d{4}-\d{2}-\d{2}|\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4}|\d{1,2}\s+[A-Za-z]{3,9},?\s+\d{4}|[A-Za-z]{3,9}\s+\d{1,2},?\s+\d{4})\b/;
-const AMOUNT_RE = /(?:â‚¹|rs\.?|inr)\s*([\d,]+(?:\.\d{1,2})?)|\b([\d,]{3,}(?:\.\d{2})?)\b(?=\s*(?:dr|cr|debit|credit|$))/i;
+const AMOUNT_RE = /(?:\u20b9|rs\.?|inr)\s*([\d,]+(?:\.\d{1,2})?)|\b([\d,]{3,}(?:\.\d{2})?)\b(?=\s*(?:dr|cr|debit|credit|$))/i;
 
 export function extractFromText(text: string, provider = "pdf"): ParseResult {
   const out: Transaction[] = [];
@@ -64,7 +67,7 @@ export function extractFromText(text: string, provider = "pdf"): ParseResult {
       .replace(DATE_RE, " ")
       .replace(AMOUNT_RE, " ")
       .replace(UTR_RE, " ")
-      .replace(/â‚¹|rs\.?|inr|debit|credit|\bdr\b|\bcr\b|paid to|upi/gi, " ")
+      .replace(/\u20b9|rs\.?|inr|debit|credit|\bdr\b|\bcr\b|paid to|upi/gi, " ")
       .replace(/\s+/g, " ")
       .trim()
       .slice(0, 80);
@@ -95,6 +98,9 @@ export class PdfTextParser implements TransactionParser {
       text = await this.extract(bytes);
     } catch {
       return { provider: this.name, transactions: [], warnings: ["Could not read PDF text (scanned image PDFs are not supported)"] };
+    }
+    if (text.length > MAX_PDF_TEXT_BYTES) {
+      return { provider: this.name, transactions: [], warnings: [PDF_TOO_LARGE_WARNING] };
     }
     const lower = text.toLowerCase();
     const provider = lower.includes("phonepe") ? "phonepe-pdf" : lower.includes("google pay") || lower.includes("gpay") ? "gpay-pdf" : lower.includes("paytm") ? "paytm-pdf" : this.name;

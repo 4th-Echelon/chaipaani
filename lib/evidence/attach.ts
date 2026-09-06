@@ -2,7 +2,7 @@
  * Attach UPI evidence to a report. The upload is parsed entirely in memory;
  * only the matched transaction's hashed UTR, amount and date are stored.
  */
-import { createHash } from "crypto";
+import { createHash, timingSafeEqual } from "crypto";
 import { eq } from "drizzle-orm";
 import { getDb, type Db } from "../db/client";
 import { evidenceMatches, reports } from "../db/schema";
@@ -17,10 +17,33 @@ export const ALLOWED_MIME = ["text/csv", "application/csv", "text/plain", "appli
 export type AttachResult =
   | { ok: true; matched: true; score: number; tier: "evidence_backed"; provider: string; transactions_seen: number }
   | { ok: true; matched: false; best_score: number; provider: string; transactions_seen: number; warnings: string[] }
-  | { ok: false; status: 400 | 404 | 409 | 413 | 415; message: string };
+  | { ok: false; status: 400 | 401 | 404 | 409 | 410 | 413 | 415; message: string };
+
+/** Evidence can be attached only this long after the report was filed. */
+export const EVIDENCE_WINDOW_MS = 30 * 86_400_000;
 
 export function sha256(s: string): string {
   return createHash("sha256").update(s).digest("hex");
+}
+
+function tokenMatches(token: string | undefined, storedHash: string | null): boolean {
+  if (!token || !storedHash) return false;
+  const a = Buffer.from(sha256(token), "hex");
+  const b = Buffer.from(storedHash, "hex");
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+/** Cheap content sniff: a PDF signature, or bytes that look like text (CSV). */
+export function looksLikePdfOrText(bytes: Uint8Array): "pdf" | "text" | null {
+  if (bytes.length >= 5 && bytes[0] === 0x25 && bytes[1] === 0x50 && bytes[2] === 0x44 && bytes[3] === 0x46 && bytes[4] === 0x2d) return "pdf";
+  const head = bytes.subarray(0, Math.min(bytes.length, 2048));
+  if (head.length === 0) return null;
+  let bad = 0;
+  for (const b of head) {
+    if (b === 0x09 || b === 0x0a || b === 0x0d) continue;
+    if (b < 0x20 || b === 0x7f) bad++;
+  }
+  return bad / head.length < 0.02 ? "text" : null;
 }
 
 export async function attachEvidence(
@@ -28,16 +51,24 @@ export async function attachEvidence(
   file: { bytes: Uint8Array; mime: string; filename: string },
   db?: Db,
   parsers?: TransactionParser[],
+  auth?: { token?: string; now?: Date },
 ): Promise<AttachResult> {
   if (file.bytes.byteLength > MAX_BYTES) return { ok: false, status: 413, message: "File is larger than 5 MB" };
   if (!ALLOWED_MIME.includes(file.mime.split(";")[0].trim().toLowerCase()) && !/\.(csv|pdf)$/i.test(file.filename)) {
     return { ok: false, status: 415, message: "Upload a CSV or PDF export from your UPI app or bank" };
   }
+  if (!looksLikePdfOrText(file.bytes)) return { ok: false, status: 415, message: "This file is not a PDF or a text export" };
   const d = db ?? (await getDb());
   await loadDepartments(d);
   const isUuid = /^[0-9a-f-]{36}$/i.test(reportRef);
   const row = (await d.select().from(reports).where(isUuid ? eq(reports.id, reportRef) : eq(reports.publicId, reportRef.toUpperCase())).limit(1))[0];
   if (!row || row.status === "removed") return { ok: false, status: 404, message: "Report not found" };
+  // Only the original reporter holds the evidence token issued at submission.
+  if (!tokenMatches(auth?.token, row.evidenceTokenHash)) return { ok: false, status: 401, message: "A valid evidence token for this report is required" };
+  const now = auth?.now ?? new Date();
+  if (now.getTime() - new Date(row.createdAt).getTime() > EVIDENCE_WINDOW_MS) {
+    return { ok: false, status: 410, message: "Evidence can only be attached within 30 days of filing the report" };
+  }
   if (row.reportType !== "paid" || !row.amount) return { ok: false, status: 400, message: "Evidence can only be attached to a paid report" };
   if (row.tier === "evidence_backed") return { ok: false, status: 409, message: "This report already has evidence attached" };
 

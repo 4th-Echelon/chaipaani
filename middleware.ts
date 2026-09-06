@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { checkCsrfRequest } from "@/lib/admin/csrf";
 
 /**
  * HTTP Basic auth for /admin and /api/admin. Edge-safe: no Node crypto here,
@@ -12,16 +13,22 @@ function decode(b64: string): string {
   }
 }
 
-// Per-instance throttle for failed admin logins: 10 failures per 15 minutes per client.
+// Per-instance throttle for failed admin logins. This counter lives in one
+// serverless instance's memory; the production-grade layer is a Cloudflare
+// rate-limiting rule on /admin* (see README, Security).
 const FAILS = new Map<string, { n: number; until: number }>();
-const FAIL_LIMIT = 10;
-const FAIL_WINDOW_MS = 15 * 60_000;
+export const ADMIN_FAIL_LIMIT = 10;
+export const ADMIN_FAIL_WINDOW_MS = 15 * 60_000;
+export const ADMIN_FAIL_DELAY_MS = 300;
+const FAIL_LIMIT = ADMIN_FAIL_LIMIT;
+const FAIL_WINDOW_MS = ADMIN_FAIL_WINDOW_MS;
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 function clientKey(req: NextRequest): string {
   return req.headers.get("cf-connecting-ip") ?? req.headers.get("x-forwarded-for")?.split(",")[0].trim() ?? req.ip ?? "unknown";
 }
 
-export function middleware(req: NextRequest) {
+export async function middleware(req: NextRequest) {
   const user = process.env.ADMIN_USER;
   const pass = process.env.ADMIN_PASSWORD;
   const challenge = () =>
@@ -37,11 +44,13 @@ export function middleware(req: NextRequest) {
   if (f && f.n >= FAIL_LIMIT && now < f.until) {
     return new NextResponse("Too many failed attempts", { status: 429, headers: { "retry-after": String(Math.ceil((f.until - now) / 1000)) } });
   }
-  const fail = () => {
+  const fail = async () => {
     const cur = FAILS.get(key);
     if (!cur || now > cur.until) FAILS.set(key, { n: 1, until: now + FAIL_WINDOW_MS });
     else cur.n += 1;
     if (FAILS.size > 5000) FAILS.clear();
+    // Slow down guessing without affecting legitimate first requests (no header).
+    await sleep(ADMIN_FAIL_DELAY_MS);
     return challenge();
   };
   const h = req.headers.get("authorization") ?? "";
@@ -54,6 +63,9 @@ export function middleware(req: NextRequest) {
   for (let i = 0; i < pass.length; i++) diff |= p.charCodeAt(i) ^ pass.charCodeAt(i);
   if (diff !== 0) return fail();
   FAILS.delete(key);
+  // Authenticated. State-changing requests must also originate from this site.
+  const csrf = checkCsrfRequest(req);
+  if (!csrf.ok) return new NextResponse("Cross-site request blocked", { status: 403 });
   return NextResponse.next();
 }
 

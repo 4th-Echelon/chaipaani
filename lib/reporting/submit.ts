@@ -2,6 +2,7 @@
  * Report submission pipeline:
  *   validate -> turnstile -> rate limit -> PII scrub -> insert -> corroborate
  */
+import { createHash, randomBytes } from "crypto";
 import { eq } from "drizzle-orm";
 import { getDb, type Db } from "../db/client";
 import { cities, moderationLog, reports } from "../db/schema";
@@ -16,7 +17,20 @@ import { toDbOutcome, validateReportInput, type FieldError } from "./schema";
 import { verifyTurnstile, type FetchLike } from "./turnstile";
 
 export type SubmitResult =
-  | { ok: true; status: 201; report: { id: string; public_id: string; status: "published" | "held"; tier: string; held_reason?: string; redactions: { kind: string; count: number }[] } }
+  | {
+      ok: true;
+      status: 201;
+      report: {
+        id: string;
+        public_id: string;
+        status: "published" | "held";
+        tier: string;
+        held_reason?: string;
+        redactions: { kind: string; count: number }[];
+        /** Shown once. Required to attach UPI evidence later; we store only its hash. */
+        evidence_token: string;
+      };
+    }
   | { ok: false; status: 400; errors: FieldError[] }
   | { ok: false; status: 429; retryAfterSeconds: number; message: string };
 
@@ -59,10 +73,13 @@ export async function submitReport(body: unknown, ctx: SubmitContext): Promise<S
   const requireApproval = process.env.REQUIRE_APPROVAL !== "0";
   const status: "held" | "published" = requireApproval || possibleName ? "held" : "published";
   const heldReason = possibleName ? "possible_name" : requireApproval ? "pending_review" : undefined;
+  const evidenceToken = randomBytes(32).toString("base64url");
+  const evidenceTokenHash = createHash("sha256").update(evidenceToken).digest("hex");
   const [row] = await d
     .insert(reports)
     .values({
       publicId,
+      evidenceTokenHash,
       reportType: input.report_type,
       departmentId: deptId,
       service: service.text || null,
@@ -92,5 +109,5 @@ export async function submitReport(body: unknown, ctx: SubmitContext): Promise<S
   }
   invalidateCache();
   scheduleStatsRefresh();
-  return { ok: true, status: 201, report: { id: row.id, public_id: publicId, status, tier, held_reason: heldReason, redactions } };
+  return { ok: true, status: 201, report: { id: row.id, public_id: publicId, status, tier, held_reason: heldReason, redactions, evidence_token: evidenceToken } };
 }

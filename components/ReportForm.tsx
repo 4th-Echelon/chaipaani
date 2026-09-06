@@ -1,6 +1,5 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { useState } from "react";
 import type { Department } from "@/lib/types";
 
@@ -12,6 +11,82 @@ interface Submitted {
   tier: string;
   held_reason?: string;
   redactions: { kind: string; count: number }[];
+  evidence_token?: string;
+}
+
+/** Inline UPI statement upload, authorised by the one-time evidence token. */
+function EvidenceUploader({ publicId, token }: { publicId: string; token: string }) {
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<string | null>(null);
+  async function upload(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const file = (new FormData(e.currentTarget).get("file") as File | null) ?? null;
+    if (!file || file.size === 0) {
+      setResult("Choose a CSV or PDF export first.");
+      return;
+    }
+    setBusy(true);
+    setResult(null);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch(`/api/reports/${publicId}/evidence`, { method: "POST", headers: { "x-evidence-token": token }, body: fd });
+      const data = await res.json();
+      if (!res.ok) setResult(data.error ?? "Upload failed.");
+      else if (data.data?.matched) setResult(`Matched. A transaction for this amount and date was found (score ${data.data.score}). The report is now marked evidence backed.`);
+      else setResult(`No matching transaction found (best score ${data.data?.best_score ?? 0}). Check the amount and date on the report, or try the CSV export instead of PDF.`);
+    } catch {
+      setResult("Network error. Please try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <form onSubmit={upload} className="mt-6 border-t border-line-dark pt-5">
+      <p className="form-label">Attach a UPI statement (optional)</p>
+      <p className="mt-1 max-w-[60ch] text-xs text-ash-dark">
+        Export your transactions from PhonePe, Google Pay, Paytm or your bank as CSV or PDF. It is read in memory and never stored; only a hash of the matching transaction is kept.
+      </p>
+      <div className="mt-3 flex flex-wrap items-center gap-3">
+        <input type="file" name="file" accept=".csv,.pdf,text/csv,application/pdf" className="text-sm text-ash-light" />
+        <button type="submit" disabled={busy} className="btn-ghost disabled:opacity-60">
+          {busy ? "Checking..." : "Upload and match"}
+        </button>
+      </div>
+      {result && (
+        <p role="status" className="mt-3 max-w-[60ch] text-sm text-ash-light">
+          {result}
+        </p>
+      )}
+    </form>
+  );
+}
+
+function CopyBlock({ label, value }: { label: string; value: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <div className="mt-4">
+      <p className="label text-ash">{label}</p>
+      <div className="mt-1 flex flex-wrap items-center gap-2">
+        <code className="select-all break-all border border-line-dark bg-black px-3 py-2 font-mono text-[13px] text-white">{value}</code>
+        <button
+          type="button"
+          className="btn-ghost h-9 px-3 text-xs"
+          onClick={async () => {
+            try {
+              await navigator.clipboard.writeText(value);
+              setCopied(true);
+              setTimeout(() => setCopied(false), 2000);
+            } catch {
+              /* clipboard blocked; the text is still selectable */
+            }
+          }}
+        >
+          {copied ? "Copied" : "Copy"}
+        </button>
+      </div>
+    </div>
+  );
 }
 
 const FIELD_MAP: Record<string, string> = {
@@ -21,7 +96,6 @@ const FIELD_MAP: Record<string, string> = {
 };
 
 export default function ReportForm({ departments, states }: { departments: Department[]; states: string[] }) {
-  const router = useRouter();
   const [reportType, setReportType] = useState<"paid" | "refused">("paid");
   const [error, setError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
@@ -63,10 +137,7 @@ export default function ReportForm({ departments, states }: { departments: Depar
         return;
       }
       const r = data.data as Submitted;
-      if (r.status === "published") {
-        router.push(`/reports/${r.public_id}?submitted=1`);
-        return;
-      }
+      // Always show the confirmation screen: the evidence token is displayed exactly once.
       setDone(r);
     } catch {
       setError("Network error. Please try again.");
@@ -99,7 +170,21 @@ export default function ReportForm({ departments, states }: { departments: Depar
         {done.redactions.length > 0 && (
           <p className="mt-3 text-xs text-ash">Automatically removed before storing: {done.redactions.map((r) => `${r.kind} (${r.count})`).join(", ")}.</p>
         )}
-        <a href="/reports" className="btn-ghost mt-6 inline-flex">Browse reports</a>
+        {done.evidence_token && (
+          <>
+            <CopyBlock label="Evidence token" value={done.evidence_token} />
+            <p className="mt-2 max-w-[60ch] text-xs text-ash-light">
+              Keep this token. It is the only way to attach a UPI statement to this report later, and we cannot recover it.
+            </p>
+            <EvidenceUploader publicId={done.public_id} token={done.evidence_token} />
+          </>
+        )}
+        <div className="mt-6 flex flex-wrap gap-3">
+          {done.status === "published" && (
+            <a href={`/reports/${done.public_id}`} className="btn-primary inline-flex">View your report</a>
+          )}
+          <a href="/reports" className="btn-ghost inline-flex">Browse reports</a>
+        </div>
       </div>
     );
   }

@@ -15,6 +15,8 @@ export const runtime = "nodejs";
  * The file is parsed in memory and never written to disk or logged.
  */
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+  const token = req.headers.get("x-evidence-token")?.trim();
+  if (!token) return fail("Missing x-evidence-token header", 401);
   // Reject before reading the body: unknown or oversized lengths are not parsed at all.
   const lenHeader = req.headers.get("content-length");
   const len = Number(lenHeader);
@@ -34,7 +36,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   if (file.size > MAX_BYTES) return fail("File is larger than 5 MB", 413);
   const bytes = new Uint8Array(await file.arrayBuffer());
   try {
-    const res = await attachEvidence(params.id, { bytes, mime: file.type || "", filename: file.name || "" });
+    const res = await attachEvidence(params.id, { bytes, mime: file.type || "", filename: file.name || "" }, undefined, undefined, { token });
     if (!res.ok) return NextResponse.json({ data: null, error: res.message }, { status: res.status });
     return ok(res, { status: res.matched ? 201 : 200 });
   } catch (err) {

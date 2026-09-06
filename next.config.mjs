@@ -19,6 +19,8 @@ const CSP = [
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  // Never ship original TypeScript to browsers. Server logs carry the digest for debugging.
+  productionBrowserSourceMaps: false,
   poweredByHeader: false,
   experimental: {
     serverComponentsExternalPackages: ["@electric-sql/pglite", "drizzle-orm", "postgres", "pdf-parse"],

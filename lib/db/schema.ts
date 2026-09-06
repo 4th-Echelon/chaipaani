@@ -78,6 +78,8 @@ export const reports = pgTable(
     clusterId: uuid("cluster_id"),
     ipHash: text("ip_hash"),
     turnstileOk: boolean("turnstile_ok").notNull().default(false),
+    /** sha256 of the one-time evidence token shown to the reporter. */
+    evidenceTokenHash: text("evidence_token_hash"),
     helpfulCount: integer("helpful_count").notNull().default(0),
     fakeCount: integer("fake_count").notNull().default(0),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

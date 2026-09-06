@@ -8,6 +8,7 @@ export const dynamic = "force-dynamic";
 export async function GET(req: NextRequest) {
   const g = guard(req);
   if ("res" in g) return g.res;
-  const limit = Math.min(1000, Number(req.nextUrl.searchParams.get("limit")) || 200);
-  return ok(await log(limit));
+  const limit = Math.min(100, Math.max(1, Number(req.nextUrl.searchParams.get("limit")) || 50));
+  const page = Math.max(1, Number(req.nextUrl.searchParams.get("page")) || 1);
+  return ok(await log(limit, undefined, page));
 }

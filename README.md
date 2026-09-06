@@ -72,3 +72,16 @@ Snapshots are refreshed by:
 - Manually: `npm run jobs:refresh-stats`, or `curl -u $ADMIN_USER:$ADMIN_PASSWORD https://<host>/api/cron/refresh-stats`.
 
 `GET /api/health?deep=1` lists each snapshot's age and compute time.
+
+
+## Security notes
+
+- **Evidence token.** Every submission returns a one-time `evidence_token` (32 random bytes, base64url). Only `sha256(token)` is stored (`reports.evidence_token_hash`). `POST /api/reports/{id}/evidence` requires the `x-evidence-token` header, compared in constant time, and only within 30 days of filing (410 afterwards). Nobody but the original reporter can upgrade a report to evidence backed.
+- **Takedown policy.** `POST /api/takedowns` has its own daily limit (`TAKEDOWNS_PER_DAY`, default 2 per hashed network). Per report: an open request is reused (no second hold); after a moderator rejects a request, further requests within 30 days are recorded and logged as `takedown_noted` but do not hold the report again. Reason and contact are trimmed, stripped of control characters and capped (2000 / 200 chars) before storage.
+- **Admin CSRF.** State-changing requests to `/admin` and `/api/admin` must be same-origin: `Sec-Fetch-Site` must be `same-origin` or `none`; without it, an `Origin` header must match the request host. Cross-site requests get 403 (`lib/admin/csrf.ts`).
+- **Admin brute force.** Failed Basic-auth attempts are counted per client (10 per 15 minutes) and delayed 300 ms. The counter lives in one serverless instance's memory, so treat it as a speed bump. The production-grade layer is a Cloudflare rate-limiting rule on `/admin*` and `/api/admin*` (for example 20 requests per minute per IP) once the Cloudflare proxy is enabled.
+- **Redirects.** Admin form redirects accept only relative same-origin paths (`safeRedirectPath`).
+- **PDF parsing.** 5 MB cap, magic-byte check, 30-page cap, 8 s timeout, and a 2 MB cap on extracted text (decompression bombs). Files that are neither `%PDF-` nor plain text are refused before parsing.
+- **Search.** Free-text search escapes `%`, `_` and `\` so wildcards are matched literally; terms are capped at 80 characters and ignored under 2.
+- **Audit log.** `GET /api/admin/log?page=&limit=` is paginated (max 100 per page) and requires admin auth.
+- **Source maps.** `productionBrowserSourceMaps` is off; run `next build`, never `next dev`, in production.

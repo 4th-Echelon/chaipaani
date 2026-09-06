@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { act, type ModAction } from "@/lib/admin/moderation";
 import { fail, ok } from "../../../../_lib";
-import { guard, readJson } from "../../../_guard";
+import { guard, readJson, safeRedirectPath } from "../../../_guard";
 
 export const dynamic = "force-dynamic";
 
@@ -24,6 +24,6 @@ export async function POST(req: NextRequest, { params }: { params: { id: string;
   }
   const res = await act(params.id, action, g.admin, reason);
   if (!res) return fail("Not found", 404);
-  if (redirect) return NextResponse.redirect(new URL(redirect, req.url), 303);
+  if (redirect) return NextResponse.redirect(new URL(safeRedirectPath(redirect), req.url), 303);
   return ok(res);
 }

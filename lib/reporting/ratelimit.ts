@@ -6,13 +6,20 @@ import { eq, lt } from "drizzle-orm";
 import { getDb, type Db } from "../db/client";
 import { rateLimits } from "../db/schema";
 
-export type Scope = "reports" | "votes" | "evidence";
+export type Scope = "reports" | "votes" | "evidence" | "takedowns";
 
-const DEFAULTS: Record<Scope, number> = { reports: 3, votes: 20, evidence: 5 };
+const DEFAULTS: Record<Scope, number> = { reports: 3, votes: 20, evidence: 5, takedowns: 2 };
 const WINDOW_MS = 86_400_000;
 
 export function limitFor(scope: Scope): number {
-  const env = scope === "reports" ? process.env.REPORTS_PER_DAY : scope === "votes" ? process.env.VOTES_PER_DAY : process.env.EVIDENCE_PER_DAY;
+  const env =
+    scope === "reports"
+      ? process.env.REPORTS_PER_DAY
+      : scope === "votes"
+        ? process.env.VOTES_PER_DAY
+        : scope === "evidence"
+          ? process.env.EVIDENCE_PER_DAY
+          : process.env.TAKEDOWNS_PER_DAY;
   const n = Number(env);
   return Number.isFinite(n) && n > 0 ? n : DEFAULTS[scope];
 }
