@@ -12,8 +12,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
+      # The lockfile is maintained with npm 11; npm 10 misreads its nested
+      # optional-dependency entries and fails `npm ci`.
+      - run: npm install -g npm@11
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
