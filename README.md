@@ -1,19 +1,44 @@
-# Chai Paani web
+<p align="center">
+  <a href="https://www.chaipaani.fyi">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="public/brand/logo-white.png">
+      <img src="public/brand/logo-black.png" alt="Chai Paani" width="340">
+    </picture>
+  </a>
+</p>
 
-Next.js 14 (App Router) frontend and reporting backend for Chai Paani, India's crowdsourced registry of what bribes really cost.
+<p align="center">
+  India's crowdsourced registry of what bribes really cost.<br>
+  Anonymous reports, aggregated into department rankings, city breakdowns and service-level averages.
+</p>
 
-## Run
+<p align="center">
+  <a href="https://www.chaipaani.fyi"><b>chaipaani.fyi</b></a> ·
+  <a href="https://www.chaipaani.fyi/report">File a report</a> ·
+  <a href="https://www.chaipaani.fyi/data">Open data</a>
+</p>
 
-```bash
-npm install
-npm run dev          # http://localhost:3000, embedded PGlite in ./.pglite, demo data seeded on first boot
-npm test             # vitest against in-memory PGlite
-npm run build
-```
+<p align="center">
+  <img alt="License: AGPL-3.0" src="https://img.shields.io/badge/license-AGPL--3.0-8fd98a">
+  <img alt="Next.js 14" src="https://img.shields.io/badge/Next.js-14-101211">
+  <img alt="PostgreSQL" src="https://img.shields.io/badge/PostgreSQL-Drizzle-101211">
+  <img alt="No tracking" src="https://img.shields.io/badge/tracking-none-8fd98a">
+</p>
 
-Copy `.env.example` to `.env.local`. Nothing is required for local development; set `DATABASE_URL` for PostgreSQL, `ADMIN_USER` / `ADMIN_PASSWORD` to enable `/admin`, `TURNSTILE_SECRET` to enforce the human check.
+---
 
-Scripts: `db:migrate` (apply `drizzle/*.sql`), `db:seed` (taxonomy + demo reports, idempotent), `db:generate` (drizzle-kit diff after editing `lib/db/schema.ts`; commit the SQL it emits), `jobs:corroborate` (recompute clusters), `jobs:dump` (write `data/reports-YYYY-MM-DD.{csv,json}` and `latest.*`).
+Chai Paani is a public ledger of petty corruption. People report the bribes they were asked to pay (or refused to pay) for everyday government services: a driving licence, a police verification, a property registration, a birth certificate. The reports are anonymised, moderated, clustered for corroboration, and published as open data that anyone can audit.
+
+No accounts. No ads. No tracking. Everything a reader sees can be downloaded as CSV or JSON.
+
+## How anonymity works
+
+The site is designed so that even its operators cannot identify a reporter.
+
+- There are no user accounts and no cookies for visitors.
+- The client IP is hashed with HMAC-SHA256 under a key generated fresh each UTC day and deleted after two days (`hash_keys`). Raw IPs are never stored or logged. After the key is gone, the hash cannot be reversed or correlated.
+- Free-text notes are scrubbed for phone numbers, emails and identifiers before storage. Text that looks like it names a person is held for human review and never auto-published.
+- Evidence files (UPI statements) are parsed in memory and never written to disk. Only the matched transaction's SHA-256 UTR hash, amount, date and normalised counterparty are kept.
 
 ## Reporting pipeline
 
@@ -21,67 +46,73 @@ Scripts: `db:migrate` (apply `drizzle/*.sql`), `db:seed` (taxonomy + demo report
 POST /api/reports
   validate (zod, field errors)           lib/reporting/schema.ts
   Turnstile (skipped when unset)         lib/reporting/turnstile.ts
-  rate limit 3/day per hashed network    lib/reporting/ratelimit.ts   (rate_limits table)
+  rate limit 3/day per hashed network    lib/reporting/ratelimit.ts
   PII scrub + possible-name detection    lib/reporting/pii.ts
   insert (public_id CP-XXXX)             lib/reporting/submit.ts
   corroborate                            lib/reporting/corroborate.ts
 ```
 
-- Reports that look like they name a person are stored with `status = held` and appear in the moderation queue; they are never rejected and never public until a moderator publishes them.
-- The client IP is hashed with HMAC-SHA256 under a key that is generated per UTC day and deleted after two days (`hash_keys`). Raw IPs are never stored or logged.
-- Corroboration clusters reports by department, city, first three words of the service and a 30-day window; three reports from three distinct hashes promote the whole cluster to `corroborated`. Nothing is ever called "verified".
-- Votes (`POST /api/vote`) are unique per (report, kind, hash). Five fake flags exceeding helpful votes hold the report automatically.
-- Evidence (`POST /api/reports/{id}/evidence`, multipart `file`, CSV or PDF, 5 MB) is parsed in memory; only the matched transaction's SHA-256 UTR hash, amount, date and normalised counterparty are stored, and the report becomes `evidence_backed` when the match score is 80 or more. The file never touches disk.
-- Takedowns (`POST /api/takedowns`) hold the report immediately; moderators decide at `POST /api/admin/takedowns/{id}/decide`.
-- Complaint letters (`POST /api/complaint {public_id}`) address the state Lokayukta / ACB and the CVC (`lib/complaint/authorities.ts`; entries marked `verify` need checking).
-- Open data: `GET /api/dump/latest.csv|json` and the `jobs:dump` script, public fields only.
+Every submission enters the moderation queue as `held` and appears publicly only after a moderator publishes it. Submissions return a one-time `evidence_token`; it is the only way to attach evidence later, and only its SHA-256 hash is stored.
 
-## Moderation
+Reports are never called "verified". The trust ladder is:
 
-`/admin` (HTTP Basic via `middleware.ts` and `lib/admin/auth.ts`) lists held, published or removed reports with publish / remove / hold. JSON API under `/api/admin/*`: `queue`, `reports/{id}` (PATCH edit, logged with before/after), `reports/{id}/{publish|remove|hold}`, `log`, `takedowns`, `takedowns/{id}/decide`.
+| Tier | Meaning |
+| --- | --- |
+| `reported` | A single anonymous report |
+| `corroborated` | Three or more reports from distinct networks, same department, city, service and 30-day window |
+| `evidence_backed` | A UPI statement matched the reported transaction with a score of 80+ |
 
-## Data layer
+Readers can vote (`POST /api/vote`, unique per report, kind and network hash); five fake flags exceeding helpful votes hold a report automatically. Anyone named in a report can file a takedown (`POST /api/takedowns`), which holds it immediately pending a moderator's decision.
 
-`lib/db/schema.ts` (Drizzle) is the source of truth; `drizzle/0000_init.sql` is the hand-written initial migration that runs on PostgreSQL and PGlite. `lib/db/client.ts` picks the driver from the environment and applies migrations on first use. `lib/data.ts` exposes read-only `store` with a 60 second in-process cache; writes go through `lib/reporting`, `lib/evidence` and `lib/admin`.
+## What else is here
+
+- **Statistics snapshots.** Public pages never run aggregate SQL per request. Every number comes from the `stats_snapshots` table, one indexed row per statistic, refreshed by write triggers, a scheduled job and `npm run jobs:refresh-stats`. `GET /api/health?deep=1` shows each snapshot's age.
+- **Complaint letters.** `POST /api/complaint` drafts a formal complaint addressed to the state Lokayukta / ACB and the CVC from a published report.
+- **Open data.** `GET /api/dump/latest.csv|json` exports all published reports, public fields only.
+- **Moderation.** `/admin` (HTTP Basic auth) lists held, published and removed reports with publish, remove and hold actions. Every action is written to an audit log.
+
+## Security model
+
+- **Evidence tokens.** 32 random bytes, base64url, returned once at submission. Only `sha256(token)` is stored; comparison is constant time; uploads are refused 30 days after filing.
+- **Admin CSRF.** State-changing admin requests must be same-origin (`Sec-Fetch-Site`, with an `Origin` fallback). Redirect targets accept only relative same-origin paths.
+- **Brute force.** Failed admin logins are counted per client (10 per 15 minutes) and delayed. In production, pair with an edge rate-limiting rule on `/admin*`.
+- **File parsing.** 5 MB cap, magic-byte sniffing, 30-page and 8-second PDF limits, 2 MB cap on extracted text.
+- **Search.** ILIKE wildcards are escaped; terms are capped and length-checked.
+- **Takedown abuse.** Takedowns have their own daily limit per network; after a rejection, repeat requests within 30 days are logged but do not re-hold the report.
+
+## Run it locally
+
+```bash
+npm install
+npm run dev          # http://localhost:3000, embedded PGlite, demo data seeded on first boot
+npm test             # vitest, 62 tests against in-memory PGlite
+npm run build
+```
+
+Nothing is required for local development. Copy `.env.example` to `.env.local` to configure:
+
+| Variable | Purpose |
+| --- | --- |
+| `DATABASE_URL` | PostgreSQL connection string (falls back to embedded PGlite in dev) |
+| `ADMIN_USER` / `ADMIN_PASSWORD` | Enables `/admin` |
+| `TURNSTILE_SECRET` | Enforces the human check on submissions |
+| `CRON_SECRET` | Authorises `GET /api/cron/refresh-stats` |
+| `REQUIRE_APPROVAL` | Pre-moderation, on by default; set `0` to auto-publish |
+
+Scripts: `db:migrate` (apply `drizzle/*.sql`), `db:seed` (taxonomy and demo reports, idempotent), `db:generate` (drizzle-kit diff after editing `lib/db/schema.ts`), `jobs:corroborate` (recompute clusters), `jobs:dump` (write open-data exports), `jobs:refresh-stats` (recompute statistics snapshots).
 
 ## Adding a UPI parser
 
-1. Create `lib/evidence/parsers/<provider>.ts`. For CSV exports extend `GenericCsvParser` and pass a column map; for other formats implement `TransactionParser` (`canParse`, `parse`) and return normalised `Transaction`s.
+1. Create `lib/evidence/parsers/<provider>.ts`. For CSV exports extend `GenericCsvParser` with a column map; for other formats implement `TransactionParser` (`canParse`, `parse`).
 2. Register it in `lib/evidence/registry.ts` before the generic parsers.
-3. Add a synthetic fixture under `tests/fixtures/` (no real statements) and a case in `lib/evidence/parsers.test.ts`.
-# chaipani
+3. Add a synthetic fixture under `tests/fixtures/` (no real statements) and a test case.
 
+## Stack
 
+Next.js 14 (App Router), TypeScript, Tailwind CSS, Drizzle ORM on PostgreSQL (embedded PGlite for dev and tests), deployed serverless. Hand-written SQL migrations in `drizzle/`.
 
-## Statistics snapshots
+## License
 
-Public pages never run aggregate SQL per request. Every number on the homepage,
-department, city and compare pages comes from the `stats_snapshots` table
-(one indexed row per statistic), read with a single SELECT and cached in
-process for 60 seconds. On a brand-new database the first request computes a
-missing snapshot once and stores it.
+[AGPL-3.0](LICENSE). If you run a modified version of this software as a service, you must publish your changes. That is deliberate: a transparency site should itself be transparent.
 
-Snapshots are refreshed by:
-
-- Vercel Cron: `.github/workflows/refresh-stats.yml (GitHub Actions schedule; Vercel Cron is a paid feature)` schedules `GET /api/cron/refresh-stats` every
-  10 minutes. Set `CRON_SECRET` in the project environment; Vercel sends it as
-  `Authorization: Bearer <secret>`.
-- Writes: a successful report submission, an auto-hold from fake flags, and
-  every moderation action schedule a debounced background refresh (at most one
-  per minute per instance). The request never waits for it.
-- Manually: `npm run jobs:refresh-stats`, or `curl -u $ADMIN_USER:$ADMIN_PASSWORD https://<host>/api/cron/refresh-stats`.
-
-`GET /api/health?deep=1` lists each snapshot's age and compute time.
-
-
-## Security notes
-
-- **Evidence token.** Every submission returns a one-time `evidence_token` (32 random bytes, base64url). Only `sha256(token)` is stored (`reports.evidence_token_hash`). `POST /api/reports/{id}/evidence` requires the `x-evidence-token` header, compared in constant time, and only within 30 days of filing (410 afterwards). Nobody but the original reporter can upgrade a report to evidence backed.
-- **Takedown policy.** `POST /api/takedowns` has its own daily limit (`TAKEDOWNS_PER_DAY`, default 2 per hashed network). Per report: an open request is reused (no second hold); after a moderator rejects a request, further requests within 30 days are recorded and logged as `takedown_noted` but do not hold the report again. Reason and contact are trimmed, stripped of control characters and capped (2000 / 200 chars) before storage.
-- **Admin CSRF.** State-changing requests to `/admin` and `/api/admin` must be same-origin: `Sec-Fetch-Site` must be `same-origin` or `none`; without it, an `Origin` header must match the request host. Cross-site requests get 403 (`lib/admin/csrf.ts`).
-- **Admin brute force.** Failed Basic-auth attempts are counted per client (10 per 15 minutes) and delayed 300 ms. The counter lives in one serverless instance's memory, so treat it as a speed bump. The production-grade layer is a Cloudflare rate-limiting rule on `/admin*` and `/api/admin*` (for example 20 requests per minute per IP) once the Cloudflare proxy is enabled.
-- **Redirects.** Admin form redirects accept only relative same-origin paths (`safeRedirectPath`).
-- **PDF parsing.** 5 MB cap, magic-byte check, 30-page cap, 8 s timeout, and a 2 MB cap on extracted text (decompression bombs). Files that are neither `%PDF-` nor plain text are refused before parsing.
-- **Search.** Free-text search escapes `%`, `_` and `\` so wildcards are matched literally; terms are capped at 80 characters and ignored under 2.
-- **Audit log.** `GET /api/admin/log?page=&limit=` is paginated (max 100 per page) and requires admin auth.
-- **Source maps.** `productionBrowserSourceMaps` is off; run `next build`, never `next dev`, in production.
+<p align="center"><sub>A Fourth Echelon Initiative</sub></p>
