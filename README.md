@@ -16,14 +16,20 @@
   <a href="https://www.chaipaani.fyi"><b>chaipaani.fyi</b></a> ·
   <a href="https://www.chaipaani.fyi/report">File a report</a> ·
   <a href="https://www.chaipaani.fyi/data">Open data</a> ·
-  <a href="ROADMAP.md">Roadmap</a>
+  <a href="ROADMAP.md">Roadmap</a> ·
+  <a href="CONTRIBUTING.md">Contribute</a>
 </p>
 
 <p align="center">
+  <a href="https://github.com/4th-Echelon/chaipaani/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/4th-Echelon/chaipaani/actions/workflows/ci.yml/badge.svg"></a>
   <img alt="License: AGPL-3.0" src="https://img.shields.io/badge/license-AGPL--3.0-8fd98a">
   <img alt="Next.js 14" src="https://img.shields.io/badge/Next.js-14-101211">
   <img alt="PostgreSQL" src="https://img.shields.io/badge/PostgreSQL-Drizzle-101211">
   <img alt="No tracking" src="https://img.shields.io/badge/tracking-none-8fd98a">
+</p>
+
+<p align="center">
+  <a href="https://www.chaipaani.fyi"><img src=".github/home.jpg" alt="The Chai Paani homepage: live bribe reports, department rankings and state-level statistics" width="800"></a>
 </p>
 
 ---
@@ -111,6 +117,18 @@ Scripts: `db:migrate` (apply `drizzle/*.sql`), `db:seed` (taxonomy and demo repo
 ## Stack
 
 Next.js 14 (App Router), TypeScript, Tailwind CSS, Drizzle ORM on PostgreSQL (embedded PGlite for dev and tests), deployed serverless. Hand-written SQL migrations in `drizzle/`.
+
+## Contributing
+
+Yes, please. This is volunteer-built civic infrastructure, and the [roadmap](ROADMAP.md) is longer than the hands available. The dev experience is deliberately frictionless: clone, `npm install`, `npm run dev`, and you have the whole site with an embedded database and demo data. No PostgreSQL, no Docker, no env vars.
+
+Good entry points:
+
+- **Write a UPI parser** (Paytm, BHIM, bank statement formats): self-contained, with a pattern to copy and the guide above.
+- **Verify complaint authority addresses** in `lib/complaint/authorities.ts`: no code required, directly improves the complaint letters.
+- **Translate** the report form into Hindi or a regional language.
+
+Read [CONTRIBUTING.md](CONTRIBUTING.md) first; it covers setup, project layout, and the anonymity ground rules every PR is held to (no IP logging, no trackers, no exceptions). Security issues go through GitHub's private vulnerability reporting, never the public tracker.
 
 ## License
 
