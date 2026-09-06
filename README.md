@@ -15,7 +15,8 @@
 <p align="center">
   <a href="https://www.chaipaani.fyi"><b>chaipaani.fyi</b></a> ·
   <a href="https://www.chaipaani.fyi/report">File a report</a> ·
-  <a href="https://www.chaipaani.fyi/data">Open data</a>
+  <a href="https://www.chaipaani.fyi/data">Open data</a> ·
+  <a href="ROADMAP.md">Roadmap</a>
 </p>
 
 <p align="center">
